@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<!-- Rend la page utilisable sur mobile (échelle correcte sur petit écran) -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Surveillance à domicile</title>
+
+<style>
+  /* ---------------------------------------------------------------
+     Style volontairement simple : c'est une version "rapide" pour
+     valider que la communication fonctionne, à retravailler plus
+     tard sur le plan visuel.
+     --------------------------------------------------------------- */
+  body {
+    font-family: Arial, sans-serif;
+    background: #111;
+    color: #eee;
+    margin: 0;
+    padding: 20px;
+  }
+
+  h1 {
+    font-size: 1.3rem;
+  }
+
+  /* Le fond sombre qui recouvre toute la page derrière le pop-up */
+  #fond-popup {
+    display: none;              /* caché par défaut, affiché en JS quand une alerte arrive */
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.75);
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* La boîte du pop-up elle-même */
+  #boite-popup {
+    background: #222;
+    border: 2px solid #d85a30;
+    border-radius: 10px;
+    padding: 24px;
+    max-width: 320px;
+    text-align: center;
+  }
+
+  #boite-popup h2 {
+    color: #d85a30;
+    margin-top: 0;
+  }
+
+  #boite-popup button {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    margin-top: 10px;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+
+  #bouton-fausse {
+    background: #378add;
+    color: white;
+  }
+
+  #bouton-vraie {
+    background: #d85a30;
+    color: white;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 8px;
+    border-bottom: 1px solid #444;
+    font-size: 0.9rem;
+  }
+
+  .badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+  }
+
+  .badge-attente { background: #5f5e5a; }
+  .badge-fausse  { background: #378add; }
+  .badge-vraie   { background: #d85a30; }
+
+  button.supprimer {
+    background: none;
+    border: 1px solid #666;
+    color: #ccc;
+    border-radius: 4px;
+    padding: 3px 8px;
+    cursor: pointer;
+  }
+
+  #bouton-vider {
+    margin-top: 12px;
+    padding: 8px 14px;
+    background: #444;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+  <h1>Surveillance à domicile — supervision</h1>
+  <p>Cette page vérifie automatiquement toutes les 2 secondes si un nouvel événement est arrivé.</p>
+
+  <!-- =============================================================
+       POP-UP D'ALERTE (caché par défaut, affiché par JavaScript)
+       ============================================================= -->
+  <div id="fond-popup">
+    <div id="boite-popup">
+      <h2>⚠ Alerte détectée</h2>
+      <p id="texte-popup">...</p>
+
+      <button id="bouton-fausse">Fausse alerte</button>
+      <button id="bouton-vraie">Vraie alerte</button>
+    </div>
+  </div>
+
+  <!-- =============================================================
+       HISTORIQUE DES ÉVÉNEMENTS
+       ============================================================= -->
+  <h2>Historique</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Heure</th>
+        <th>Capteur</th>
+        <th>Zone</th>
+        <th>Statut</th>
+        <th></th>
+      </tr>
+    </thead>
+    <!-- Le contenu de ce <tbody> est entièrement généré par JavaScript -->
+    <tbody id="corps-historique"></tbody>
+  </table>
+
+  <button id="bouton-vider">Vider tout l'historique</button>
+
+
+<script>
+// =======================================================================
+// Ce script fait 3 choses en boucle :
+//   1. Vérifier s'il y a un événement "en_attente" -> afficher le pop-up
+//   2. Envoyer la décision de l'utilisateur au serveur quand il clique
+//   3. Rafraîchir la liste de l'historique affichée en bas de page
+// =======================================================================
+
+// On garde en mémoire l'identifiant de l'événement actuellement affiché
+// dans le pop-up, pour savoir à QUI envoyer la décision au clic d'un bouton.
+let evenementAffiche = null;
+
+// Références vers les éléments HTML qu'on va manipuler
+const fondPopup   = document.getElementById("fond-popup");
+const boitePopup  = document.getElementById("boite-popup");
+const textePopup  = document.getElementById("texte-popup");
+const boutonFausse = document.getElementById("bouton-fausse");
+const boutonVraie  = document.getElementById("bouton-vraie");
+const corpsHistorique = document.getElementById("corps-historique");
+const boutonVider = document.getElementById("bouton-vider");
+
+
+// -----------------------------------------------------------------------
+// Transforme un timestamp Unix (nombre de secondes) en heure lisible
+// -----------------------------------------------------------------------
+function formaterHeure(timestampUnix) {
+  const date = new Date(timestampUnix * 1000); // JavaScript attend des millisecondes, d'où le *1000
+  return date.toLocaleTimeString("fr-FR");
+}
+
+
+// -----------------------------------------------------------------------
+// Vérifie s'il existe un événement en attente de décision.
+// Appelée toutes les 2 secondes (voir setInterval tout en bas).
+// -----------------------------------------------------------------------
+async function verifierNouvellesAlertes() {
+  try {
+    // "fetch" est la fonction native du navigateur pour faire des
+    // requêtes HTTP. Ici on demande la liste des événements "en_attente".
+    // Comme la page est servie par le MÊME serveur qui expose l'API
+    // (http://192.168.1.1:8000), on peut utiliser une URL relative
+    // ("/api/...") sans avoir à préciser l'adresse complète, et sans
+    // souci de CORS (même origine).
+    const reponse = await fetch("/api/evenements?decision=en_attente");
+    const evenements = await reponse.json(); // on convertit la réponse JSON en tableau JS
+
+    if (evenements.length === 0) {
+      // Rien en attente : si le pop-up était affiché, on le cache
+      fondPopup.style.display = "none";
+      evenementAffiche = null;
+      return;
+    }
+
+    // On prend le plus récent (le premier de la liste, triée côté
+    // serveur du plus récent au plus ancien)
+    const dernier = evenements[0];
+
+    // Si c'est déjà celui affiché, pas besoin de tout refaire
+    if (evenementAffiche === dernier.id) return;
+
+    // On mémorise quel événement est affiché, et on remplit le texte du pop-up
+    evenementAffiche = dernier.id;
+    textePopup.textContent =
+      `Capteur : ${dernier.capteur} — Zone : ${dernier.zone} — ${formaterHeure(dernier.horodatage)}`;
+
+    // On affiche le pop-up (display:flex pour que le centrage CSS fonctionne)
+    fondPopup.style.display = "flex";
+
+  } catch (erreur) {
+    console.error("Impossible de contacter le serveur :", erreur);
+  }
+}
+
+
+// -----------------------------------------------------------------------
+// Envoie la décision de l'utilisateur au serveur
+// -----------------------------------------------------------------------
+async function envoyerDecision(decision) {
+  if (!evenementAffiche) return; // sécurité : rien à envoyer si aucun événement affiché
+
+  try {
+    await fetch(`/api/evenements/${evenementAffiche}/decision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: decision }),
+    });
+  } catch (erreur) {
+    console.error("Erreur lors de l'envoi de la décision :", erreur);
+  }
+
+  // On cache le pop-up immédiatement (pas besoin d'attendre le prochain
+  // rafraîchissement) et on met à jour l'historique tout de suite
+  fondPopup.style.display = "none";
+  evenementAffiche = null;
+  chargerHistorique();
+}
+
+// Quand on clique sur "Fausse alerte", on envoie "fausse_alerte"
+boutonFausse.addEventListener("click", () => envoyerDecision("fausse_alerte"));
+
+// Quand on clique sur "Vraie alerte", on envoie "vraie_alerte"
+boutonVraie.addEventListener("click", () => envoyerDecision("vraie_alerte"));
+
+
+// -----------------------------------------------------------------------
+// Traduit le code de statut interne en texte + couleur affichés
+// -----------------------------------------------------------------------
+function badgeStatut(decision) {
+  if (decision === "fausse_alerte") return `<span class="badge badge-fausse">fausse alerte</span>`;
+  if (decision === "vraie_alerte")  return `<span class="badge badge-vraie">vraie alerte</span>`;
+  return `<span class="badge badge-attente">en attente</span>`;
+}
+
+
+// -----------------------------------------------------------------------
+// Recharge et réaffiche tout l'historique des événements
+// -----------------------------------------------------------------------
+async function chargerHistorique() {
+  try {
+    const reponse = await fetch("/api/evenements");
+    const evenements = await reponse.json();
+
+    // On reconstruit entièrement le contenu du tableau à chaque appel.
+    // Pour un prototype avec peu d'événements, c'est largement suffisant
+    // en performance (pas besoin d'une mise à jour ligne par ligne).
+    corpsHistorique.innerHTML = evenements.map(evenement => `
+      <tr>
+        <td>${formaterHeure(evenement.horodatage)}</td>
+        <td>${evenement.capteur}</td>
+        <td>${evenement.zone}</td>
+        <td>${badgeStatut(evenement.decision)}</td>
+        <td><button class="supprimer" onclick="supprimerEvenement('${evenement.id}')">supprimer</button></td>
+      </tr>
+    `).join("");
+
+  } catch (erreur) {
+    console.error("Impossible de charger l'historique :", erreur);
+  }
+}
+
+
+// -----------------------------------------------------------------------
+// Supprime un événement précis de l'historique
+// -----------------------------------------------------------------------
+async function supprimerEvenement(id) {
+  await fetch(`/api/evenements/${id}`, { method: "DELETE" });
+  chargerHistorique(); // on rafraîchit la liste affichée
+}
+
+
+// -----------------------------------------------------------------------
+// Vide complètement l'historique (bouton en bas de page)
+// -----------------------------------------------------------------------
+boutonVider.addEventListener("click", async () => {
+  const confirmation = confirm("Supprimer tout l'historique ?");
+  if (!confirmation) return; // l'utilisateur a annulé
+
+  await fetch("/api/evenements", { method: "DELETE" });
+  chargerHistorique();
+});
+
+
+// -----------------------------------------------------------------------
+// DÉMARRAGE : on lance les vérifications immédiatement, puis en boucle
+// -----------------------------------------------------------------------
+chargerHistorique();            // affiche l'historique dès le chargement de la page
+verifierNouvellesAlertes();      // vérifie s'il y a déjà une alerte en attente
+
+// Toutes les 2 secondes : on regarde s'il y a une nouvelle alerte
+setInterval(verifierNouvellesAlertes, 2000);
+
+// Toutes les 5 secondes : on rafraîchit l'historique (utile si un autre
+// appareil/onglet a traité un événement entre-temps)
+setInterval(chargerHistorique, 5000);
+</script>
+
+</body>
+</html>
