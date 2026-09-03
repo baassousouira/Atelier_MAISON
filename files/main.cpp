@@ -1,290 +1,203 @@
-// main.cpp
-// -----------------------------------------------------------------------
-// Programme principal du Raspberry n°2 : caméra fixe + détection de
-// mouvement + LED d'acquittement.
-//
-// DÉROULÉ GÉNÉRAL DU PROGRAMME :
-//   1. On capture des images en continu depuis la caméra
-//   2. On analyse chaque image pour détecter un mouvement (code déjà
-//      fourni dans capture.cpp / mouvement.cpp, on ne le modifie pas)
-//   3. Si un mouvement est confirmé sur plusieurs images d'affilée
-//      (pour éviter les faux positifs dus au bruit), on envoie un
-//      événement au serveur
-//   4. On interroge ensuite le serveur en boucle pour savoir si
-//      l'utilisateur a répondu depuis l'app/le site web
-//   5. Selon la réponse, on pilote la LED (clignote une fois ou reste
-//      allumée)
-//   6. On repart en surveillance normale après une pause
-//
-// Ce fonctionnement est modélisé par une toute petite "machine à états"
-// (enum EtatAlerte) : à chaque instant, le programme est dans UN SEUL
-// des 3 états possibles, ce qui rend la logique facile à suivre.
-// -----------------------------------------------------------------------
-
-#include "./capture.h"     // primitives de capture caméra (fourni au départ)
-#include "./mouvement.h"    // détection de mouvement par différence d'images (fourni au départ)
-#include "./network.h"       // communication avec le serveur (nouveau)
-#include "./gpio.h"            // pilotage de la LED (nouveau)
-#include "./config.h"            // tous les réglages centralisés (nouveau)
+#include "./capture.h"
+#include "./mouvement.h"
 
 #include <opencv2/opencv.hpp>
-#include <chrono>    // pour mesurer le temps (délais, timeouts...)
-#include <iostream>   // pour afficher des messages dans le terminal
-#include <thread>      // pour std::this_thread::sleep_for
-#include <sstream>      // uniquement utilisé en mode debug (affichage texte sur l'image)
+#include <iostream>
+#include <chrono>
+#include <sstream>
 
-// -----------------------------------------------------------------------
-// MODE DEBUG (optionnel)
-// -----------------------------------------------------------------------
-// Par défaut (sans rien faire de spécial), le programme tourne en mode
-// "headless" (sans écran), comme il le fera réellement sur le Raspberry
-// pendant la surveillance.
-// Si vous voulez RÉAFFICHER les fenêtres de debug (utile pour régler le
-// seuil de détection sur un PC avec écran), compilez avec :
-//     make CFLAGS="-Wall -DDEBUG_UI"
-// -----------------------------------------------------------------------
+int main()
+{
+    cv::VideoCapture cap;
 
-// Les 3 états possibles du programme, expliqués en commentaire à côté de
-// chaque valeur :
-enum class EtatAlerte {
-    NORMAL,               // surveillance active, on cherche un mouvement
-    EN_ATTENTE_DECISION,  // événement envoyé, on attend la réponse de l'app/du site
-    EN_PAUSE               // décision reçue et traitée, on laisse une pause avant de reprendre
-};
-
-int main() {
-    // =====================================================================
-    // ÉTAPE 1 : INITIALISATION DE LA CAMÉRA (code déjà fourni, inchangé)
-    // =====================================================================
-    cv::VideoCapture cap; // objet OpenCV représentant le flux vidéo
-
-    // Pipeline GStreamer : décrit comment récupérer et formater le flux
-    // vidéo depuis la caméra du Raspberry (module CSI via libcamera)
+    // Pipeline GStreamer adapté à libcamera + OpenCV
     std::string pipeline =
         "libcamerasrc ! "
-        "video/x-raw,width=640,height=480,format=RGB,framerate=30/1 ! "
-        "videoconvert ! appsink";
+        "video/x-raw,width=640,height=480,format=NV12,framerate=30/1,colorimetry=bt709 ! "
+        "videoconvert ! "
+        "video/x-raw,format=BGR ! "
+        "appsink drop=true max-buffers=1 sync=false";
 
-    cap.open(pipeline, cv::CAP_GSTREAMER); // ouvre le flux avec cette pipeline
-    open_capture(&cap);                     // vérifie que ça a bien fonctionné (sinon quitte le programme)
+    std::cout << "Ouverture de la camera..." << std::endl;
 
-    // =====================================================================
-    // ÉTAPE 2 : PRÉPARATION DES IMAGES ET DU BUFFER DE MOUVEMENT
-    // =====================================================================
-    // colorFrame  : l'image couleur brute capturée à chaque tour de boucle
-    // gray        : la même image convertie en niveaux de gris (nécessaire
-    //               pour la détection de mouvement par différence d'images)
-    // motionMask  : image "noir et blanc" indiquant où il y a du mouvement
-    //               (blanc = mouvement détecté à cet endroit, noir = rien)
-    cv::Mat colorFrame(CAPTURE_HEIGHT, CAPTURE_WIDTH, CV_8UC3);
+    cap.open(pipeline, cv::CAP_GSTREAMER);
+
+    if (!cap.isOpened())
+    {
+        std::cerr << "ERREUR : impossible d'ouvrir la camera." << std::endl;
+        return -1;
+    }
+
+    std::cout << "Camera ouverte." << std::endl;
+
+    cv::Mat colorFrame;
     cv::Mat gray(CAPTURE_HEIGHT, CAPTURE_WIDTH, CV_8UC1);
     cv::Mat motionMask(CAPTURE_HEIGHT, CAPTURE_WIDTH, CV_8UC1);
 
-    // MotionBuffer : structure (définie dans mouvement.h) qui garde en
-    // mémoire les dernières images pour pouvoir calculer une différence
-    // stable dans le temps (moins sensible au bruit qu'une simple
-    // comparaison image N vs image N-1)
     MotionBuffer mb;
-    motion_init(mb, 6, cv::Size(CAPTURE_WIDTH, CAPTURE_HEIGHT)); // 6 = taille de la fenêtre temporelle
-    int threshold_pixel = 20; // seuil de sensibilité de la détection (plus bas = plus sensible)
+    motion_init(
+        mb,
+        6,
+        cv::Size(CAPTURE_WIDTH, CAPTURE_HEIGHT)
+    );
 
-    // =====================================================================
-    // ÉTAPE 3 : INITIALISATION DES NOUVEAUX MODULES (réseau + GPIO)
-    // =====================================================================
-    if (!gpio_init()) {
-        // On n'arrête pas le programme pour autant : la détection vidéo
-        // peut continuer à fonctionner même si la LED est en panne,
-        // ce n'est pas bloquant pour la démonstration.
-        std::cerr << "main: échec initialisation GPIO, la LED ne fonctionnera pas" << std::endl;
-    }
-    network_init(); // prépare libcurl (voir network.cpp)
+    int threshold_pixel = 20;
 
-    // =====================================================================
-    // ÉTAPE 4 (optionnelle) : FENÊTRES DE DEBUG
-    // =====================================================================
-#ifdef DEBUG_UI
-    cv::namedWindow("capture", 1);
-    cv::namedWindow("mouvement", 1);
-    // Petit curseur pour ajuster le seuil de détection en direct, pratique
-    // pour le calibrer avant de figer sa valeur dans config.h
-    cv::createTrackbar("Seuil", "mouvement", &threshold_pixel, 200);
-#endif
+    cv::namedWindow("capture", cv::WINDOW_AUTOSIZE);
+    cv::namedWindow("mouvement", cv::WINDOW_AUTOSIZE);
 
-    // =====================================================================
-    // ÉTAPE 5 : VARIABLES DE LA MACHINE À ÉTATS
-    // =====================================================================
-    EtatAlerte etat = EtatAlerte::NORMAL; // on démarre en surveillance normale
+    auto t_prev =
+        std::chrono::high_resolution_clock::now();
 
-    int frames_mouvement_consecutifs = 0;  // compteur d'images successives avec mouvement
-    std::string event_id_courant;           // identifiant de l'événement en cours (renvoyé par le serveur)
+    while (true)
+    {
+        // ------------------------------------------------
+        // 1. CAPTURE
+        // ------------------------------------------------
 
-    // Horodatages utilisés pour gérer les délais (pause après une alerte,
-    // abandon si le serveur ne répond jamais)
-    std::chrono::steady_clock::time_point fin_pause;
-    std::chrono::steady_clock::time_point debut_attente_decision;
+        if (!cap.read(colorFrame))
+        {
+            std::cerr << "Erreur lecture frame" << std::endl;
+            break;
+        }
 
-    auto t_prev = std::chrono::high_resolution_clock::now(); // pour le calcul du FPS (debug uniquement)
+        if (colorFrame.empty())
+        {
+            std::cerr << "Image vide recue." << std::endl;
+            continue;
+        }
 
-    // =====================================================================
-    // ÉTAPE 6 : BOUCLE PRINCIPALE (tourne indéfiniment)
-    // =====================================================================
-    while (true) {
+        // ------------------------------------------------
+        // 2. CONVERSION EN GRIS
+        // ------------------------------------------------
 
-        // --- 6.1 : Capture d'une image (comme dans le code d'origine) ---
-        capture_frame(&cap, &colorFrame);
-
-        // --- 6.2 : Conversion en niveaux de gris ---
         RGBtoBW(&colorFrame, &gray);
 
-        // --- 6.3 : Mise à jour du buffer et calcul du masque de mouvement ---
+        // ------------------------------------------------
+        // 3. DETECTION DU MOUVEMENT
+        // ------------------------------------------------
+
         motion_push_gray(mb, gray);
-        bool masque_valide = motion_compute_mask(mb, motionMask, threshold_pixel);
-        // "masque_valide" est false tant que le buffer n'a pas assez
-        // d'images accumulées (au tout début du programme)
 
-        // --- 6.4 : Barycentre et couleur moyenne (utile pour debug/affichage) ---
-        cv::Point centroid = compute_centroid_keep_last(motionMask, mb);
-        cv::Scalar meanRGB = compute_mean_rgb_keep_last(colorFrame, motionMask, mb);
-        draw_cross(colorFrame, centroid, cv::Scalar(0, 255, 0)); // dessine une croix verte (visible seulement en mode DEBUG_UI)
+        bool mask_ready =
+            motion_compute_mask(
+                mb,
+                motionMask,
+                threshold_pixel
+            );
 
-        // --- 6.5 : Surface de mouvement détectée (nombre de pixels blancs dans le masque) ---
-        int surface_mouvement = cv::countNonZero(motionMask);
+        // ------------------------------------------------
+        // 4. BARYCENTRE
+        // ------------------------------------------------
 
-        // =================================================================
-        // LOGIQUE DE LA MACHINE À ÉTATS
-        // =================================================================
-        switch (etat) {
+        cv::Point centroid =
+            compute_centroid_keep_last(
+                motionMask,
+                mb
+            );
 
-        // -----------------------------------------------------------
-        // ÉTAT "NORMAL" : on surveille, on attend un mouvement franc
-        // -----------------------------------------------------------
-        case EtatAlerte::NORMAL: {
+        cv::Scalar meanRGB =
+            compute_mean_rgb_keep_last(
+                colorFrame,
+                motionMask,
+                mb
+            );
 
-            // MOTION_AREA_MIN est défini dans mouvement.h : c'est la
-            // surface minimale (en nombre de pixels) pour considérer
-            // qu'il y a VRAIMENT du mouvement (et pas juste 2-3 pixels
-            // de bruit électronique)
-            if (masque_valide && surface_mouvement >= MOTION_AREA_MIN) {
-                frames_mouvement_consecutifs++;
-            } else {
-                // Dès qu'une image n'a pas de mouvement suffisant, on
-                // remet le compteur à zéro : on veut un mouvement CONTINU,
-                // pas juste quelques images isolées éparpillées dans le temps.
-                frames_mouvement_consecutifs = 0;
-            }
-
-            // Si on a assez d'images consécutives avec mouvement, on
-            // considère que c'est un VRAI événement à signaler
-            if (frames_mouvement_consecutifs >= CONSECUTIVE_FRAMES_TRIGGER) {
-                std::cout << "main: mouvement confirmé, envoi de l'alerte au serveur" << std::endl;
-
-                if (send_alert_event(CAPTEUR_NAME, ZONE_NAME, event_id_courant)) {
-                    // L'envoi a réussi : on passe à l'état "en attente de décision"
-                    etat = EtatAlerte::EN_ATTENTE_DECISION;
-                    debut_attente_decision = std::chrono::steady_clock::now();
-                } else {
-                    // L'envoi a échoué (serveur injoignable...) : on reste en
-                    // NORMAL, on retentera dès qu'un nouveau mouvement franc arrivera
-                    std::cerr << "main: échec de l'envoi, nouvelle tentative au prochain mouvement" << std::endl;
-                }
-
-                frames_mouvement_consecutifs = 0; // on remet le compteur à zéro dans tous les cas
-            }
-            break;
+        if (mask_ready)
+        {
+            draw_cross(
+                colorFrame,
+                centroid,
+                cv::Scalar(0, 255, 0)
+            );
         }
 
-        // -----------------------------------------------------------
-        // ÉTAT "EN_ATTENTE_DECISION" : on a signalé l'alerte, on attend
-        // que quelqu'un réponde depuis l'app/le site web
-        // -----------------------------------------------------------
-        case EtatAlerte::EN_ATTENTE_DECISION: {
+        // ------------------------------------------------
+        // 5. FPS
+        // ------------------------------------------------
 
-            // On vérifie d'abord qu'on n'attend pas depuis trop longtemps
-            auto attente_ecoulee = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - debut_attente_decision).count();
+        auto t_now =
+            std::chrono::high_resolution_clock::now();
 
-            if (attente_ecoulee >= POLL_TIMEOUT_SECONDS) {
-                std::cerr << "main: personne n'a répondu à temps, on repart en surveillance" << std::endl;
-                etat = EtatAlerte::NORMAL;
-                break;
-            }
+        double dt =
+            std::chrono::duration_cast<
+                std::chrono::microseconds
+            >(t_now - t_prev).count() / 1000000.0;
 
-            // On interroge le serveur pour savoir où en est la décision
-            std::string decision = poll_decision(event_id_courant);
+        if (dt <= 0)
+            dt = 0.000001;
 
-            if (decision == "fausse_alerte") {
-                std::cout << "main: fausse alerte confirmée par l'app/le site" << std::endl;
-                led_blink_once(300); // 300 millisecondes = un flash bref
-                etat = EtatAlerte::EN_PAUSE;
-                fin_pause = std::chrono::steady_clock::now() + std::chrono::seconds(ALERT_COOLDOWN_SECONDS);
-
-            } else if (decision == "vraie_alerte") {
-                std::cout << "main: alerte confirmée comme réelle, la LED reste allumée" << std::endl;
-                led_on(); // reste allumée (pas de délai ici, contrairement au clignotement)
-                etat = EtatAlerte::EN_PAUSE;
-                fin_pause = std::chrono::steady_clock::now() + std::chrono::seconds(ALERT_COOLDOWN_SECONDS);
-
-            } else if (decision == "erreur") {
-                // Problème réseau ponctuel : on ne change pas d'état, on
-                // retentera au prochain tour de boucle
-                std::cerr << "main: erreur réseau pendant l'attente de décision, nouvel essai..." << std::endl;
-            }
-            // Si decision == "en_attente" : rien à faire, on continue à
-            // interroger le serveur au prochain tour de boucle
-
-            // On attend un court instant avant de réinterroger le serveur,
-            // pour ne pas le solliciter en boucle sans arrêt
-            std::this_thread::sleep_for(std::chrono::milliseconds(POLL_INTERVAL_MS));
-            break;
-        }
-
-        // -----------------------------------------------------------
-        // ÉTAT "EN_PAUSE" : alerte traitée, on patiente avant de
-        // pouvoir en redéclencher une nouvelle
-        // -----------------------------------------------------------
-        case EtatAlerte::EN_PAUSE:
-            if (std::chrono::steady_clock::now() >= fin_pause) {
-                etat = EtatAlerte::NORMAL;
-                std::cout << "main: fin de pause, détection réarmée" << std::endl;
-            }
-            break;
-        }
-
-        // =================================================================
-        // AFFICHAGE DEBUG (uniquement si compilé avec -DDEBUG_UI)
-        // =================================================================
-#ifdef DEBUG_UI
-        auto t_now = std::chrono::high_resolution_clock::now();
-        double dt = std::chrono::duration_cast<std::chrono::microseconds>(t_now - t_prev).count() / 1e6;
-        if (dt <= 0) dt = 1e-6; // évite une division par zéro
         double fps = 1.0 / dt;
+
         t_prev = t_now;
 
-        std::ostringstream oss_info;
-        oss_info << "FPS: " << int(fps) << "  Etat: " << int(etat);
-        cv::putText(colorFrame, oss_info.str(), cv::Point(10, 60),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+        // ------------------------------------------------
+        // 6. TEXTE RGB
+        // ------------------------------------------------
 
-        cv::imshow("capture", colorFrame);
-        cv::imshow("mouvement", motionMask);
+        std::ostringstream oss_rgb;
 
-        // Permet de quitter le programme en appuyant sur une touche
-        // (uniquement disponible en mode debug avec fenêtre)
-        if (cv::waitKey(1) >= 0)
+        oss_rgb
+            << "RGB mean: R="
+            << int(meanRGB[0])
+            << " G="
+            << int(meanRGB[1])
+            << " B="
+            << int(meanRGB[2]);
+
+        cv::putText(
+            colorFrame,
+            oss_rgb.str(),
+            cv::Point(10, 30),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.7,
+            cv::Scalar(0, 255, 255),
+            2
+        );
+
+        // ------------------------------------------------
+        // 7. TEXTE FPS
+        // ------------------------------------------------
+
+        std::ostringstream oss_fps;
+
+        oss_fps
+            << "FPS: "
+            << int(fps);
+
+        cv::putText(
+            colorFrame,
+            oss_fps.str(),
+            cv::Point(10, 60),
+            cv::FONT_HERSHEY_SIMPLEX,
+            0.7,
+            cv::Scalar(255, 255, 0),
+            2
+        );
+
+        // ------------------------------------------------
+        // 8. AFFICHAGE
+        // ------------------------------------------------
+
+        cv::imshow(
+            "capture",
+            colorFrame
+        );
+
+        cv::imshow(
+            "mouvement",
+            motionMask
+        );
+
+        // ESC pour quitter
+        int key = cv::waitKey(1);
+
+        if (key == 27)
             break;
-#endif
     }
 
-    // =====================================================================
-    // ÉTAPE 7 : NETTOYAGE AVANT DE QUITTER (jamais atteint en usage normal
-    // headless, sauf si on ajoute plus tard un moyen d'arrêter proprement)
-    // =====================================================================
-    gpio_cleanup();
-    network_cleanup();
     cap.release();
-#ifdef DEBUG_UI
     cv::destroyAllWindows();
-#endif
 
     return 0;
 }
