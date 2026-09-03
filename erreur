@@ -1,87 +1,83 @@
-g++ -Wall -c gpio.cpp -I/usr/include/opencv4   
-gpio.cpp: In function ‘bool gpio_init()’:
-gpio.cpp:26:12: error: ‘gpiod_chip_open_get_name’ was not declared in this scope; did you mean ‘gpiod_chip_info_get_name’?
-   26 |     chip = gpiod_chip_open_get_name(GPIO_CHIP);
-      |            ^~~~~~~~~~~~~~~~~~~~~~~~
-      |            gpiod_chip_info_get_name
-gpio.cpp:33:35: error: too many arguments to function ‘gpiod_chip_info* gpiod_chip_get_info(gpiod_chip*)’
-   33 |     led_line = gpiod_chip_get_info(chip, LED_GPIO_PIN);
-      |                ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~
-In file included from gpio.cpp:11:
-/usr/include/gpiod.h:155:25: note: declared here
-  155 | struct gpiod_chip_info *gpiod_chip_get_info(struct gpiod_chip *chip);
-      |                         ^~~~~~~~~~~~~~~~~~~
-gpio.cpp:33:35: error: cannot convert ‘gpiod_chip_info*’ to ‘gpiod_line*’ in assignment
-   33 |     led_line = gpiod_chip_get_info(chip, LED_GPIO_PIN);
-      |                ~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~
-      |                                   |
-      |                                   gpiod_chip_info*
-/usr/include/gpiod.h:37:8: note: class type ‘gpiod_chip_info’ is incomplete
-   37 | struct gpiod_chip_info;
-      |        ^~~~~~~~~~~~~~~
-gpio.cpp:42:35: error: cannot convert ‘gpiod_line*’ to ‘gpiod_line_request*’
-   42 |     if (gpiod_line_request_get_fd(led_line, "surveillance_led", 0) < 0) {
-      |                                   ^~~~~~~~
-      |                                   |
-      |                                   gpiod_line*
-/usr/include/gpiod.h:1125:58: note:   initializing argument 1 of ‘int gpiod_line_request_get_fd(gpiod_line_request*)’
- 1125 | int gpiod_line_request_get_fd(struct gpiod_line_request *request);
-      |                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
-gpio.cpp:22:15: note: class type ‘gpiod_line’ is incomplete
-   22 | static struct gpiod_line *led_line = nullptr;
-      |               ^~~~~~~~~~
-gpio.cpp: In function ‘void gpio_cleanup()’:
-gpio.cpp:53:37: error: expression list treated as compound expression in functional cast [-fpermissive]
-   53 |         gpiod_line_value(led_line, 0);
-      |                                     ^
-gpio.cpp:53:26: warning: left operand of comma operator has no effect [-Wunused-value]
-   53 |         gpiod_line_value(led_line, 0);
-      |                          ^~~~~~~~
-gpio.cpp:53:38: warning: right operand of comma operator has no effect [-Wunused-value]
-   53 |         gpiod_line_value(led_line, 0);
-      |                                      ^
-gpio.cpp:54:27: warning: unnecessary parentheses in declaration of ‘led_line’ [-Wparentheses]
-   54 |         gpiod_line_request(led_line); // on "rend" la broche, pour qu'un autre programme puisse l'utiliser
-      |                           ^~~~~~~~~~
-gpio.cpp:54:27: note: remove parentheses
-   54 |         gpiod_line_request(led_line); // on "rend" la broche, pour qu'un autre programme puisse l'utiliser
-      |                           ^~~~~~~~~~
-      |                           -        -
-gpio.cpp:54:36: error: aggregate ‘gpiod_line_request led_line’ has incomplete type and cannot be defined
-   54 |         gpiod_line_request(led_line); // on "rend" la broche, pour qu'un autre programme puisse l'utiliser
-      |                                    ^
-gpio.cpp: In function ‘void led_on()’:
-gpio.cpp:64:47: error: expression list treated as compound expression in functional cast [-fpermissive]
-   64 |     if (led_line) gpiod_line_value(led_line, 1); // 1 = allumé
-      |                                               ^
-gpio.cpp:64:36: warning: left operand of comma operator has no effect [-Wunused-value]
-   64 |     if (led_line) gpiod_line_value(led_line, 1); // 1 = allumé
-      |                                    ^~~~~~~~
-gpio.cpp:64:48: warning: right operand of comma operator has no effect [-Wunused-value]
-   64 |     if (led_line) gpiod_line_value(led_line, 1); // 1 = allumé
-      |                                                ^
-gpio.cpp: In function ‘void led_off()’:
-gpio.cpp:68:47: error: expression list treated as compound expression in functional cast [-fpermissive]
-   68 |     if (led_line) gpiod_line_value(led_line, 0); // 0 = éteint
-      |                                               ^
-gpio.cpp:68:36: warning: left operand of comma operator has no effect [-Wunused-value]
-   68 |     if (led_line) gpiod_line_value(led_line, 0); // 0 = éteint
-      |                                    ^~~~~~~~
-gpio.cpp:68:48: warning: right operand of comma operator has no effect [-Wunused-value]
-   68 |     if (led_line) gpiod_line_value(led_line, 0); // 0 = éteint
-      |                                                ^
-gpio.cpp: In function ‘void led_blink_once(int)’:
-gpio.cpp:74:5: error: ‘gpiod_line_set_value’ was not declared in this scope; did you mean ‘gpiod_line_value’?
-   74 |     gpiod_line_set_value(led_line, 1); // on allume
-      |     ^~~~~~~~~~~~~~~~~~~~
-      |     gpiod_line_value
-gpio.cpp:82:33: error: expression list treated as compound expression in functional cast [-fpermissive]
-   82 |     gpiod_line_value(led_line, 0); // puis on éteint
-      |                                 ^
-gpio.cpp:82:22: warning: left operand of comma operator has no effect [-Wunused-value]
-   82 |     gpiod_line_value(led_line, 0); // puis on éteint
-      |                      ^~~~~~~~
-gpio.cpp:82:34: warning: right operand of comma operator has no effect [-Wunused-value]
-   82 |     gpiod_line_value(led_line, 0); // puis on éteint
-      |                                  ^
-make: *** [makefile:34: gpio.o] Error 1
+// gpio.cpp
+// -----------------------------------------------------------------------
+// Ce fichier pilote la LED d'acquittement branchée sur ce Raspberry.
+// Rappel de la logique métier (définie ensemble) :
+//   - fausse alerte -> la LED clignote UNE FOIS (juste pour dire "reçu")
+//   - vraie alerte  -> la LED RESTE ALLUMÉE (jusqu'à la prochaine action)
+// -----------------------------------------------------------------------
+
+#include "gpio.h"
+#include "config.h"     // pour GPIO_CHIP et LED_GPIO_PIN
+#include <gpiod.h>       // bibliothèque GPIO moderne pour Raspberry Pi
+#include <iostream>
+#include <thread>          // pour std::this_thread::sleep_for (attendre X millisecondes)
+#include <chrono>
+
+// Ces deux pointeurs représentent respectivement :
+// - "chip"     : le contrôleur GPIO du Raspberry (il n'y en a qu'un seul en général)
+// - "led_line" : la broche précise reliée à la LED
+// On les garde en variables "statiques" (visibles uniquement dans ce fichier)
+// car on en a besoin dans plusieurs fonctions (init, on, off, cleanup...).
+static struct gpiod_chip *chip = nullptr;
+static struct gpiod_line *led_line = nullptr;
+
+bool gpio_init() {
+    // On ouvre le contrôleur GPIO par son nom (défini dans config.h, en général "gpiochip0")
+    chip = gpiod_chip_open_by_name(GPIO_CHIP);
+    if (!chip) {
+        std::cerr << "gpio: impossible d'ouvrir " << GPIO_CHIP << std::endl;
+        return false;
+    }
+
+    // On récupère la broche précise (le numéro est en numérotation BCM, cf. config.h)
+    led_line = gpiod_chip_get_line(chip, LED_GPIO_PIN);
+    if (!led_line) {
+        std::cerr << "gpio: impossible d'accéder à la broche " << LED_GPIO_PIN << std::endl;
+        return false;
+    }
+
+    // On "réserve" cette broche en sortie (output), avec une valeur initiale de 0 (éteinte).
+    // Le premier argument texte ("surveillance_led") sert juste d'étiquette de debug,
+    // visible par exemple avec la commande "gpioinfo" dans le terminal.
+    if (gpiod_line_request_output(led_line, "surveillance_led", 0) < 0) {
+        std::cerr << "gpio: impossible de réserver la broche en sortie" << std::endl;
+        return false;
+    }
+
+    return true; // tout s'est bien passé
+}
+
+void gpio_cleanup() {
+    // On éteint la LED avant de quitter, par propreté
+    if (led_line) {
+        gpiod_line_set_value(led_line, 0);
+        gpiod_line_release(led_line); // on "rend" la broche, pour qu'un autre programme puisse l'utiliser
+    }
+    if (chip) {
+        gpiod_chip_close(chip);
+    }
+}
+
+void led_on() {
+    // On vérifie que la broche a bien été initialisée avant de l'utiliser
+    // (sécurité : évite un plantage si gpio_init() a échoué plus tôt)
+    if (led_line) gpiod_line_set_value(led_line, 1); // 1 = allumé
+}
+
+void led_off() {
+    if (led_line) gpiod_line_set_value(led_line, 0); // 0 = éteint
+}
+
+void led_blink_once(int duration_ms) {
+    if (!led_line) return;
+
+    gpiod_line_set_value(led_line, 1); // on allume
+
+    // On "met en pause" le programme pendant duration_ms millisecondes.
+    // Note : pendant ce temps, le programme ne fait RIEN d'autre (pas de
+    // capture caméra). Pour un flash court (quelques centaines de ms),
+    // ce n'est pas gênant pour un prototype.
+    std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
+
+    gpiod_line_set_value(led_line, 0); // puis on éteint
+}
