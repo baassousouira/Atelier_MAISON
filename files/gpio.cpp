@@ -1,83 +1,286 @@
 // gpio.cpp
 // -----------------------------------------------------------------------
-// Ce fichier pilote la LED d'acquittement branchée sur ce Raspberry.
-// Rappel de la logique métier (définie ensemble) :
-//   - fausse alerte -> la LED clignote UNE FOIS (juste pour dire "reçu")
-//   - vraie alerte  -> la LED RESTE ALLUMÉE (jusqu'à la prochaine action)
+// Gestion de la LED d'acquittement.
+//
+// Logique :
+//   - fausse alerte -> la LED clignote une fois
+//   - vraie alerte  -> la LED reste allumée
 // -----------------------------------------------------------------------
 
 #include "gpio.h"
-#include "config.h"     // pour GPIO_CHIP et LED_GPIO_PIN
-#include <gpiod.h>       // bibliothèque GPIO moderne pour Raspberry Pi
+#include "config.h"
+
+#include <gpiod.h>
+
 #include <iostream>
-#include <thread>          // pour std::this_thread::sleep_for (attendre X millisecondes)
+#include <thread>
 #include <chrono>
 
-// Ces deux pointeurs représentent respectivement :
-// - "chip"     : le contrôleur GPIO du Raspberry (il n'y en a qu'un seul en général)
-// - "led_line" : la broche précise reliée à la LED
-// On les garde en variables "statiques" (visibles uniquement dans ce fichier)
-// car on en a besoin dans plusieurs fonctions (init, on, off, cleanup...).
+// Contrôleur GPIO
 static struct gpiod_chip *chip = nullptr;
-static struct gpiod_line *led_line = nullptr;
 
-bool gpio_init() {
-    // On ouvre le contrôleur GPIO par son nom (défini dans config.h, en général "gpiochip0")
-    chip = gpiod_chip_open_by_name(GPIO_CHIP);
-    if (!chip) {
-        std::cerr << "gpio: impossible d'ouvrir " << GPIO_CHIP << std::endl;
+// Demande GPIO utilisée pour contrôler la LED
+static struct gpiod_line_request *led_request = nullptr;
+
+
+// -----------------------------------------------------------------------
+// INITIALISATION
+// -----------------------------------------------------------------------
+
+bool gpio_init()
+{
+    // Ouvre le contrôleur GPIO
+    chip = gpiod_chip_open(GPIO_CHIP);
+
+    if (!chip)
+    {
+        std::cerr << "gpio: impossible d'ouvrir "
+                  << GPIO_CHIP << std::endl;
+
         return false;
     }
 
-    // On récupère la broche précise (le numéro est en numérotation BCM, cf. config.h)
-    led_line = gpiod_chip_get_line(chip, LED_GPIO_PIN);
-    if (!led_line) {
-        std::cerr << "gpio: impossible d'accéder à la broche " << LED_GPIO_PIN << std::endl;
-        return false;
-    }
 
-    // On "réserve" cette broche en sortie (output), avec une valeur initiale de 0 (éteinte).
-    // Le premier argument texte ("surveillance_led") sert juste d'étiquette de debug,
-    // visible par exemple avec la commande "gpioinfo" dans le terminal.
-    if (gpiod_line_request_output(led_line, "surveillance_led", 0) < 0) {
-        std::cerr << "gpio: impossible de réserver la broche en sortie" << std::endl;
-        return false;
-    }
+    // ---------------------------------------------------------------
+    // Création des paramètres de la broche
+    // ---------------------------------------------------------------
 
-    return true; // tout s'est bien passé
-}
+    struct gpiod_line_settings *settings =
+        gpiod_line_settings_new();
 
-void gpio_cleanup() {
-    // On éteint la LED avant de quitter, par propreté
-    if (led_line) {
-        gpiod_line_set_value(led_line, 0);
-        gpiod_line_release(led_line); // on "rend" la broche, pour qu'un autre programme puisse l'utiliser
-    }
-    if (chip) {
+    if (!settings)
+    {
+        std::cerr << "gpio: impossible de créer les paramètres GPIO"
+                  << std::endl;
+
         gpiod_chip_close(chip);
+        chip = nullptr;
+
+        return false;
+    }
+
+
+    // On configure la broche comme une SORTIE
+    if (gpiod_line_settings_set_direction(
+            settings,
+            GPIOD_LINE_DIRECTION_OUTPUT) < 0)
+    {
+        std::cerr << "gpio: impossible de configurer la broche en sortie"
+                  << std::endl;
+
+        gpiod_line_settings_free(settings);
+        gpiod_chip_close(chip);
+        chip = nullptr;
+
+        return false;
+    }
+
+
+    // Valeur initiale : LED éteinte
+    if (gpiod_line_settings_set_output_value(
+            settings,
+            GPIOD_LINE_VALUE_INACTIVE) < 0)
+    {
+        std::cerr << "gpio: impossible de définir la valeur initiale"
+                  << std::endl;
+
+        gpiod_line_settings_free(settings);
+        gpiod_chip_close(chip);
+        chip = nullptr;
+
+        return false;
+    }
+
+
+    // ---------------------------------------------------------------
+    // Création de la configuration de la ligne
+    // ---------------------------------------------------------------
+
+    struct gpiod_line_config *line_config =
+        gpiod_line_config_new();
+
+    if (!line_config)
+    {
+        std::cerr << "gpio: impossible de créer la configuration"
+                  << std::endl;
+
+        gpiod_line_settings_free(settings);
+        gpiod_chip_close(chip);
+        chip = nullptr;
+
+        return false;
+    }
+
+
+    // Ajoute notre GPIO à la configuration
+    unsigned int offset = LED_GPIO_PIN;
+
+    if (gpiod_line_config_add_line_settings(
+            line_config,
+            &offset,
+            1,
+            settings) < 0)
+    {
+        std::cerr << "gpio: impossible d'ajouter le GPIO "
+                  << LED_GPIO_PIN << std::endl;
+
+        gpiod_line_config_free(line_config);
+        gpiod_line_settings_free(settings);
+        gpiod_chip_close(chip);
+        chip = nullptr;
+
+        return false;
+    }
+
+
+    // Les paramètres ne sont plus nécessaires après ajout
+    gpiod_line_settings_free(settings);
+
+
+    // ---------------------------------------------------------------
+    // Création de la demande GPIO
+    // ---------------------------------------------------------------
+
+    struct gpiod_request_config *request_config =
+        gpiod_request_config_new();
+
+    if (!request_config)
+    {
+        std::cerr << "gpio: impossible de créer la demande GPIO"
+                  << std::endl;
+
+        gpiod_line_config_free(line_config);
+        gpiod_chip_close(chip);
+        chip = nullptr;
+
+        return false;
+    }
+
+
+    // Nom donné à notre programme lors de la réservation du GPIO
+    gpiod_request_config_set_consumer(
+        request_config,
+        "surveillance_led"
+    );
+
+
+    // Demande effectivement le GPIO
+    led_request =
+        gpiod_chip_request_lines(
+            chip,
+            request_config,
+            line_config
+        );
+
+
+    // Les configurations ne sont plus nécessaires
+    gpiod_request_config_free(request_config);
+    gpiod_line_config_free(line_config);
+
+
+    if (!led_request)
+    {
+        std::cerr << "gpio: impossible de réserver le GPIO "
+                  << LED_GPIO_PIN << std::endl;
+
+        gpiod_chip_close(chip);
+        chip = nullptr;
+
+        return false;
+    }
+
+
+    std::cout << "gpio: LED initialisée sur GPIO "
+              << LED_GPIO_PIN << std::endl;
+
+    return true;
+}
+
+
+// -----------------------------------------------------------------------
+// NETTOYAGE
+// -----------------------------------------------------------------------
+
+void gpio_cleanup()
+{
+    if (led_request)
+    {
+        // On éteint la LED avant de quitter
+        gpiod_line_request_set_value(
+            led_request,
+            LED_GPIO_PIN,
+            GPIOD_LINE_VALUE_INACTIVE
+        );
+
+        // Libère la réservation du GPIO
+        gpiod_line_request_release(led_request);
+
+        led_request = nullptr;
+    }
+
+
+    if (chip)
+    {
+        gpiod_chip_close(chip);
+        chip = nullptr;
     }
 }
 
-void led_on() {
-    // On vérifie que la broche a bien été initialisée avant de l'utiliser
-    // (sécurité : évite un plantage si gpio_init() a échoué plus tôt)
-    if (led_line) gpiod_line_set_value(led_line, 1); // 1 = allumé
+
+// -----------------------------------------------------------------------
+// LED ALLUMÉE
+// -----------------------------------------------------------------------
+
+void led_on()
+{
+    if (!led_request)
+        return;
+
+    gpiod_line_request_set_value(
+        led_request,
+        LED_GPIO_PIN,
+        GPIOD_LINE_VALUE_ACTIVE
+    );
 }
 
-void led_off() {
-    if (led_line) gpiod_line_set_value(led_line, 0); // 0 = éteint
+
+// -----------------------------------------------------------------------
+// LED ÉTEINTE
+// -----------------------------------------------------------------------
+
+void led_off()
+{
+    if (!led_request)
+        return;
+
+    gpiod_line_request_set_value(
+        led_request,
+        LED_GPIO_PIN,
+        GPIOD_LINE_VALUE_INACTIVE
+    );
 }
 
-void led_blink_once(int duration_ms) {
-    if (!led_line) return;
 
-    gpiod_line_set_value(led_line, 1); // on allume
+// -----------------------------------------------------------------------
+// UN CLIGNOTEMENT
+// -----------------------------------------------------------------------
 
-    // On "met en pause" le programme pendant duration_ms millisecondes.
-    // Note : pendant ce temps, le programme ne fait RIEN d'autre (pas de
-    // capture caméra). Pour un flash court (quelques centaines de ms),
-    // ce n'est pas gênant pour un prototype.
-    std::this_thread::sleep_for(std::chrono::milliseconds(duration_ms));
+void led_blink_once(int duration_ms)
+{
+    if (!led_request)
+        return;
 
-    gpiod_line_set_value(led_line, 0); // puis on éteint
+
+    // Allume la LED
+    led_on();
+
+
+    // Attend la durée demandée
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(duration_ms)
+    );
+
+
+    // Éteint la LED
+    led_off();
 }

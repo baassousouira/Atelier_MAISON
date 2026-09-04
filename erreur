@@ -1,0 +1,3 @@
+curl -X POST http://169.254.109.227:8000/api/evenements \
+  -H "Content-Type: application/json" \
+  -d '{"capteur":"camera_fixe","zone":"salon","horodatage":1234567890}'
