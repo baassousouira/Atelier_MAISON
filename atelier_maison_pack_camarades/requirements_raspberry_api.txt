@@ -1,0 +1,3 @@
+# Seulement si vous choisissez FastAPI pour exposer l'API locale :
+fastapi
+uvicorn

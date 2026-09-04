@@ -1,0 +1,22 @@
+{
+  "has_servo": false,
+  "components": [
+    {
+      "name": "camera",
+      "enabled": true
+    },
+    {
+      "name": "photoresistance",
+      "enabled": true,
+      "value": 632
+    },
+    {
+      "name": "button",
+      "enabled": true
+    },
+    {
+      "name": "led",
+      "enabled": true
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "has_servo": true,
+  "components": [
+    {
+      "name": "camera",
+      "enabled": true
+    },
+    {
+      "name": "servo",
+      "enabled": true
+    }
+  ]
+}
