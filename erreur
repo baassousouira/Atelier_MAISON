@@ -6,22 +6,24 @@ curl -X POST http://169.254.109.227:8000/api/evenements \
 
 -----------
 
-import serial
-import json
-import requests
+from fastapi import FastAPI
+from pydantic import BaseModel
 
-ser = serial.Serial('/dev/ttyACM0', 9600)
+app = FastAPI()
 
-URL = "http://IP_DU_MAC:8000/update"   # On va créer cet endpoint
+etat_capteurs = {"luminosite": 0, "bouton": 0}
 
-while True:
-    ligne = ser.readline().decode().strip()
-    try:
-        data = json.loads(ligne)
-        print("Données reçues :", data)
+class Capteurs(BaseModel):
+    luminosite: float
+    bouton: int
 
-        # Envoi au serveur FastAPI
-        requests.post(URL, json=data)
+@app.post("/update")
+def update_capteurs(data: Capteurs):
+    etat_capteurs["luminosite"] = data.luminosite
+    etat_capteurs["bouton"] = data.bouton
+    return {"status": "ok"}
 
-    except Exception as e:
-        print("Erreur :", e)
+@app.get("/capteurs")
+def lire_capteurs():
+    return etat_capteurs
+
