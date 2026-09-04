@@ -1,3 +1,27 @@
 curl -X POST http://169.254.109.227:8000/api/evenements \
   -H "Content-Type: application/json" \
   -d '{"capteur":"camera_fixe","zone":"salon","horodatage":1234567890}'
+
+
+
+-----------
+
+import serial
+import json
+import requests
+
+ser = serial.Serial('/dev/ttyACM0', 9600)
+
+URL = "http://IP_DU_MAC:8000/update"   # On va créer cet endpoint
+
+while True:
+    ligne = ser.readline().decode().strip()
+    try:
+        data = json.loads(ligne)
+        print("Données reçues :", data)
+
+        # Envoi au serveur FastAPI
+        requests.post(URL, json=data)
+
+    except Exception as e:
+        print("Erreur :", e)
