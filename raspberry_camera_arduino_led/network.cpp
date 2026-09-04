@@ -194,3 +194,51 @@ std::string poll_decision(const std::string &event_id) {
     curl_easy_cleanup(curl);
     return decision;
 }
+
+// -------------------------------------------------------------------
+// send_snapshot : envoie une image JPEG associée à un événement
+// -------------------------------------------------------------------
+// On utilise l'API "mime" de curl (upload de type formulaire, comme
+// quand un site web vous fait "choisir un fichier"), c'est la façon
+// standard d'envoyer un fichier binaire en HTTP.
+bool send_snapshot(const std::string &event_id, const std::vector<unsigned char> &jpeg_data) {
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        std::cerr << "network: impossible d'initialiser curl (capture)" << std::endl;
+        return false;
+    }
+
+    std::string url = std::string(SERVER_BASE_URL) + "/api/evenements/" + event_id + "/image";
+
+    // On construit un "formulaire" avec un seul champ fichier, nommé
+    // "fichier" (ce nom doit correspondre à ce que le serveur attend,
+    // voir main.py : "fichier: UploadFile = File(...)")
+    curl_mime *formulaire = curl_mime_init(curl);
+    curl_mimepart *partie = curl_mime_addpart(formulaire);
+    curl_mime_name(partie, "fichier");
+    curl_mime_type(partie, "image/jpeg");
+    curl_mime_filename(partie, "capture.jpg");
+    curl_mime_data(partie, reinterpret_cast<const char *>(jpeg_data.data()), jpeg_data.size());
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_MIMEPOST, formulaire);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+
+    CURLcode res = curl_easy_perform(curl);
+
+    bool ok = false;
+    if (res != CURLE_OK) {
+        std::cerr << "network: échec envoi de la capture (" << curl_easy_strerror(res) << ")" << std::endl;
+    } else {
+        long http_code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        ok = (http_code >= 200 && http_code < 300);
+        if (!ok) {
+            std::cerr << "network: le serveur a répondu un code " << http_code << " pour la capture" << std::endl;
+        }
+    }
+
+    curl_mime_free(formulaire); // libère aussi la "partie" créée dessus
+    curl_easy_cleanup(curl);
+    return ok;
+}

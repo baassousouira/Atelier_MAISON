@@ -13,6 +13,7 @@
 #include "arduino.h"
 #include <iostream>
 #include <cstring>
+#include <cerrno>       // pour errno / strerror : savoir POURQUOI l'ouverture a échoué
 #include <fcntl.h>      // open()
 #include <termios.h>     // configuration du port série
 #include <unistd.h>       // read(), close()
@@ -48,7 +49,12 @@ bool arduino_init(const char *port, int baudrate) {
     // bloqué en attendant des données si l'Arduino n'envoie rien
     fd_arduino = open(port, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd_arduino < 0) {
-        std::cerr << "arduino: impossible d'ouvrir " << port << std::endl;
+        // strerror(errno) donne la VRAIE raison système : "No such file or
+        // directory" (mauvais port), "Permission denied" (droits, essayez
+        // sudo ou le groupe "dialout"), "Device or resource busy" (déjà
+        // utilisé par un autre programme, ex: l'IDE Arduino encore ouvert)...
+        std::cerr << "arduino: impossible d'ouvrir " << port
+                   << " (" << std::strerror(errno) << ")" << std::endl;
         return false;
     }
 
@@ -76,6 +82,10 @@ bool arduino_init(const char *port, int baudrate) {
     tty.c_lflag = 0; // mode "brut" : pas de traitement des caractères spéciaux
     tty.c_oflag = 0;
     tty.c_iflag &= ~(IXON | IXOFF | IXANY); // pas de contrôle de flux logiciel
+    tty.c_iflag &= ~ICRNL; // NE PAS traduire les retours chariot (\r) en \n :
+                             // Serial.println() côté Arduino envoie "\r\n", et
+                             // sans ça, le \r se change en \n fantôme, créant
+                             // une ligne vide juste après chaque vrai message
 
     // VMIN=0, VTIME=0 : lecture non bloquante (read() retourne immédiatement,
     // même s'il n'y a rien à lire)
@@ -144,9 +154,25 @@ bool arduino_lire_evenement(std::string &capteur_out) {
     std::string ligne = buffer_reception.substr(0, position_retour_ligne);
     buffer_reception.erase(0, position_retour_ligne + 1);
 
+    // Sécurité supplémentaire : si un \r a quand même survécu (autre
+    // système, autre configuration série...), on le retire pour ne pas
+    // fausser le contenu de la ligne.
+    if (!ligne.empty() && ligne.back() == '\r') {
+        ligne.pop_back();
+    }
+
+    if (ligne.empty()) {
+        // Ligne vide (artefact de fin de ligne), rien à traiter : on ne
+        // logue rien, ce n'est pas une vraie erreur.
+        return false;
+    }
+
+    std::cout << "[arduino] ligne reçue : " << ligne << std::endl;
+
     std::string capteur = extraire_champ_json(ligne, "capteur");
     if (capteur.empty()) {
-        return false; // ligne reçue mais pas exploitable (bruit série, ligne corrompue...)
+        std::cerr << "[arduino] ligne ignorée (pas de champ \"capteur\" exploitable) : " << ligne << std::endl;
+        return false;
     }
 
     capteur_out = capteur;

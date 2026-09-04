@@ -5,6 +5,7 @@
 // on parle au serveur (curl, JSON...), juste QUOI lui dire.
 
 #include <string>
+#include <vector>
 
 // À appeler UNE SEULE FOIS au tout début du programme.
 // Prépare la bibliothèque réseau (libcurl) pour qu'elle puisse être utilisée.
@@ -28,5 +29,13 @@ bool send_alert_event(const std::string &capteur, const std::string &zone, std::
 //   "vraie_alerte"  -> l'utilisateur a confirmé une vraie intrusion
 //   "erreur"        -> problème réseau, on n'a pas pu savoir
 std::string poll_decision(const std::string &event_id);
+
+/*
+ * Envoie une image (capture caméra actuelle) associée à un événement,
+ * pour que l'utilisateur puisse voir ce qui se passe avant de décider.
+ * (POST /api/evenements/{id}/image, en multipart/form-data)
+ * Retourne true si l'envoi a réussi.
+ */
+bool send_snapshot(const std::string &event_id, const std::vector<unsigned char> &jpeg_data);
 
 #endif /* NETWORK_H */

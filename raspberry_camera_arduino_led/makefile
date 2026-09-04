@@ -19,7 +19,7 @@ PATH_LIBS = -L/usr/lib/aarch64-linux-gnu/      #for raspi4
 
 # Ajout de -lcurl (requêtes HTTP vers le serveur) et -lgpiod (pilotage GPIO/LED)
 # -lpthread est nécessaire car network.cpp/gpio.cpp utilisent std::this_thread
-LIBS = -lopencv_core -lopencv_highgui -lopencv_imgproc -lopencv_videoio -lcurl -lgpiod -lpthread
+LIBS = -lopencv_core -lopencv_highgui -lopencv_imgproc -lopencv_videoio -lopencv_imgcodecs -lcurl -lgpiod -lpthread
 
 capture.o : capture.cpp capture.h
 	$(CC) $(CFLAGS) -c capture.cpp $(PATH_INCLUDE)
