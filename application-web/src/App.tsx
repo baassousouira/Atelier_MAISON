@@ -1,122 +1,321 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+// App.tsx
+
+// -----------------------------------------------------------------------
+// ROUTAGE PRINCIPAL DE L'APPLICATION
+// -----------------------------------------------------------------------
+//
+// Deux espaces utilisent le même serveur FastAPI mais possèdent des
+// contextes React distincts :
+//
+// /utilisateur
+//   ↓
+// SystemProvider
+//   ↓
+// UserLayout
+//
+// /entreprise
+//   ↓
+// CompanyProvider
+//   ↓
+// CompanyLayout
+//
+// IMPORTANT :
+//
+// Il n'existe toujours pas de vraie authentification.
+//
+// /connexion reste donc uniquement l'écran de choix du prototype.
+//
+// -----------------------------------------------------------------------
+
+import {
+  Navigate,
+  Route,
+  Routes,
+} from 'react-router-dom'
+
+import CompanyLayout
+  from './components/company/CompanyLayout'
+
+import UserLayout
+  from './components/user/UserLayout'
+
+import {
+  CompanyProvider,
+} from './contexts/CompanyProvider'
+
+import {
+  SystemProvider,
+} from './contexts/SystemProvider'
+
+import CompanyAlertsPage
+  from './pages/CompanyAlertsPage'
+
+import CompanyAuditPage
+  from './pages/CompanyAuditPage'
+
+import CompanyCustomersPage
+  from './pages/CompanyCustomersPage'
+
+import CompanyDashboardPage
+  from './pages/CompanyDashboardPage'
+
+import CompanyInterventionsPage
+  from './pages/CompanyInterventionsPage'
+
+import CompanyInfrastructurePage
+  from './pages/CompanyInfrastructurePage'
+
+import CompanySupportPage
+  from './pages/CompanySupportPage'
+
+import LoginPage
+  from './pages/LoginPage'
+
+import UserAlertsPage
+  from './pages/UserAlertsPage'
+
+import UserCamerasPage
+  from './pages/UserCamerasPage'
+
+import UserDashboardPage
+  from './pages/UserDashboardPage'
+
+import UserEquipmentDetailPage
+  from './pages/UserEquipmentDetailPage'
+
+import UserEquipmentPage
+  from './pages/UserEquipmentPage'
+
+import UserHistoryPage
+  from './pages/UserHistoryPage'
+
+import UserRobotPage
+  from './pages/UserRobotPage'
+
+import UserStatisticsPage
+  from './pages/UserStatisticspage'
+
+
+// =========================================================================
+// APPLICATION
+// =========================================================================
 
 function App() {
-  const [count, setCount] = useState(0)
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <Routes>
 
-      <div className="ticks"></div>
+      {/* ================================================================
+          ENTRÉE
+          ================================================================ */}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      <Route
+        path="/"
+        element={
+          <Navigate
+            to="/connexion"
+            replace
+          />
+        }
+      />
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+
+      <Route
+        path="/connexion"
+        element={
+          <LoginPage />
+        }
+      />
+
+
+      {/* ================================================================
+          ESPACE PARTICULIER
+          ================================================================
+
+          SystemProvider reste partagé entre toutes les sous-pages
+          utilisateur.
+          ================================================================ */}
+
+      <Route
+        path="/utilisateur"
+        element={
+          <SystemProvider>
+            <UserLayout />
+          </SystemProvider>
+        }
+      >
+        <Route
+          index
+          element={
+            <UserDashboardPage />
+          }
+        />
+
+        <Route
+          path="alertes"
+          element={
+            <UserAlertsPage />
+          }
+        />
+
+        <Route
+          path="cameras"
+          element={
+            <UserCamerasPage />
+          }
+        />
+
+        <Route
+          path="robot"
+          element={
+            <UserRobotPage />
+          }
+        />
+
+        <Route
+          path="equipements"
+          element={
+            <UserEquipmentPage />
+          }
+        />
+
+        <Route
+          path="equipements/:equipmentId"
+          element={
+            <UserEquipmentDetailPage />
+          }
+        />
+
+        <Route
+          path="statistiques"
+          element={
+            <UserStatisticsPage />
+          }
+        />
+
+        <Route
+          path="historique"
+          element={
+            <UserHistoryPage />
+          }
+        />
+
+        <Route
+          path="*"
+          element={
+            <Navigate
+              to="/utilisateur"
+              replace
+            />
+          }
+        />
+      </Route>
+
+
+      {/* ================================================================
+          ESPACE ENTREPRISE
+          ================================================================
+
+          CompanyProvider est monté UNE SEULE FOIS ici.
+
+          Toutes les sous-pages entreprise partagent donc :
+
+          - les alertes ;
+          - le client sélectionné ;
+          - le ticket sélectionné ;
+          - les intervenants ;
+          - les interventions ;
+          - l'infrastructure réseau ;
+          - les logs ;
+          - l'état de connexion ;
+          - l'identité opérateur temporaire.
+          ================================================================ */}
+
+      <Route
+        path="/entreprise"
+        element={
+          <CompanyProvider>
+            <CompanyLayout />
+          </CompanyProvider>
+        }
+      >
+        <Route
+          index
+          element={
+            <CompanyDashboardPage />
+          }
+        />
+
+        <Route
+          path="alertes"
+          element={
+            <CompanyAlertsPage />
+          }
+        />
+
+        <Route
+          path="clients"
+          element={
+            <CompanyCustomersPage />
+          }
+        />
+
+        <Route
+          path="support"
+          element={
+            <CompanySupportPage />
+          }
+        />
+
+        <Route
+          path="interventions"
+          element={
+            <CompanyInterventionsPage />
+          }
+        />
+
+        <Route
+          path="infrastructure"
+          element={
+            <CompanyInfrastructurePage />
+          }
+        />
+
+        <Route
+          path="audit"
+          element={
+            <CompanyAuditPage />
+          }
+        />
+
+        <Route
+          path="*"
+          element={
+            <Navigate
+              to="/entreprise"
+              replace
+            />
+          }
+        />
+      </Route>
+
+
+      {/* ================================================================
+          ROUTE INCONNUE
+          ================================================================ */}
+
+      <Route
+        path="*"
+        element={
+          <Navigate
+            to="/connexion"
+            replace
+          />
+        }
+      />
+    </Routes>
   )
 }
+
 
 export default App
