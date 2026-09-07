@@ -1,311 +1,299 @@
 // main.cpp
 // -----------------------------------------------------------------------
-// Programme principal du Raspberry n°2 : caméra fixe + détection de
-// mouvement + LED d'acquittement.
+// Programme principal du Raspberry : caméra fixe + bouton + photorésistance
+// (via Arduino) + LED d'acquittement.
 //
-// DÉROULÉ GÉNÉRAL DU PROGRAMME :
-//   1. On capture des images en continu depuis la caméra
-//   2. On analyse chaque image pour détecter un mouvement (code déjà
-//      fourni dans capture.cpp / mouvement.cpp, on ne le modifie pas)
-//   3. Si un mouvement est confirmé sur plusieurs images d'affilée
-//      (pour éviter les faux positifs dus au bruit), on envoie un
-//      événement au serveur
-//   4. On interroge ensuite le serveur en boucle pour savoir si
-//      l'utilisateur a répondu depuis l'app/le site web
-//   5. Selon la réponse, on pilote la LED (clignote une fois ou reste
-//      allumée)
-//   6. On repart en surveillance normale après une pause
+// IMPORTANT : les 3 capteurs sont INDÉPENDANTS les uns des autres. Une
+// alerte caméra en cours de traitement ne bloque plus le bouton ou la
+// photorésistance, et inversement — chacun a son propre "état" (struct
+// SuiviCapteur ci-dessous), suivi séparément.
 //
-// Ce fonctionnement est modélisé par une toute petite "machine à états"
-// (enum EtatAlerte) : à chaque instant, le programme est dans UN SEUL
-// des 3 états possibles, ce qui rend la logique facile à suivre.
+// Seule ressource partagée entre les 3 : l'unique LED physique. Règle
+// retenue : si une alerte est confirmée "vraie" quelque part, la LED
+// reste allumée tant qu'au moins une alerte réelle est active, même si
+// un autre capteur reçoit entre-temps une "fausse alerte" (qui, dans ce
+// cas, ne fait pas clignoter la LED pour ne pas l'éteindre par erreur).
 // -----------------------------------------------------------------------
 
-#include "./capture.h"     // primitives de capture caméra (fourni au départ)
-#include "./mouvement.h"    // détection de mouvement par différence d'images (fourni au départ)
-#include "./network.h"       // communication avec le serveur (nouveau)
-#include "./gpio.h"            // pilotage de la LED (nouveau)
-#include "./arduino.h"           // liaison série avec l'Arduino bouton+photorésistance (nouveau)
-#include "./config.h"              // tous les réglages centralisés (nouveau)
+#include "./capture.h"
+#include "./mouvement.h"
+#include "./network.h"
+#include "./gpio.h"
+#include "./arduino.h"
+#include "./config.h"
 
 #include <opencv2/opencv.hpp>
-#include <chrono>    // pour mesurer le temps (délais, timeouts...)
-#include <iostream>   // pour afficher des messages dans le terminal
-#include <thread>      // pour std::this_thread::sleep_for
-#include <sstream>      // uniquement utilisé en mode debug (affichage texte sur l'image)
+#include <chrono>
+#include <iostream>
+#include <sstream>
 
-// -----------------------------------------------------------------------
-// MODE DEBUG (optionnel)
-// -----------------------------------------------------------------------
-// Par défaut (sans rien faire de spécial), le programme tourne en mode
-// "headless" (sans écran), comme il le fera réellement sur le Raspberry
-// pendant la surveillance.
-// Si vous voulez RÉAFFICHER les fenêtres de debug (utile pour régler le
-// seuil de détection sur un PC avec écran), compilez avec :
+// Pour réafficher les fenêtres de debug (PC avec écran) :
 //     make CFLAGS="-Wall -DDEBUG_UI"
-// -----------------------------------------------------------------------
 
-// Les 3 états possibles du programme, expliqués en commentaire à côté de
-// chaque valeur :
 enum class EtatAlerte {
-    NORMAL,               // surveillance active, on cherche un mouvement
+    NORMAL,               // surveillance active pour CE capteur
     EN_ATTENTE_DECISION,  // événement envoyé, on attend la réponse de l'app/du site
-    EN_PAUSE               // décision reçue et traitée, on laisse une pause avant de reprendre
+    EN_PAUSE               // décision traitée, pause avant de pouvoir redéclencher CE capteur
+};
+
+// Regroupe tout ce qu'il faut suivre pour UN capteur donné. Chaque
+// capteur (caméra, bouton, photorésistance) a sa propre instance de
+// cette structure, totalement indépendante des deux autres.
+struct SuiviCapteur {
+    EtatAlerte etat = EtatAlerte::NORMAL;
+    std::string event_id;
+    std::chrono::steady_clock::time_point debut_attente;
+    std::chrono::steady_clock::time_point dernier_sondage;   // dernière fois qu'on a interrogé le serveur pour CE capteur
+    std::chrono::steady_clock::time_point fin_pause;
+    bool pause_suite_a_vraie_alerte = false;                  // pour savoir, à la fin de la pause, s'il faut décrémenter le compteur d'alertes réelles actives
 };
 
 int main() {
     // =====================================================================
-    // ÉTAPE 1 : INITIALISATION DE LA CAMÉRA (code déjà fourni, inchangé)
+    // INITIALISATION CAMÉRA (inchangé)
     // =====================================================================
-    cv::VideoCapture cap; // objet OpenCV représentant le flux vidéo
+    cv::VideoCapture cap;
 
-    // Pipeline GStreamer : décrit comment récupérer et formater le flux
-    // vidéo depuis la caméra du Raspberry (module CSI via libcamera)
     std::string pipeline =
         "libcamerasrc ! "
         "video/x-raw,width=640,height=480,format=RGB,framerate=30/1 ! "
         "videoconvert ! appsink";
 
-    cap.open(pipeline, cv::CAP_GSTREAMER); // ouvre le flux avec cette pipeline
-    open_capture(&cap);                     // vérifie que ça a bien fonctionné (sinon quitte le programme)
+    cap.open(pipeline, cv::CAP_GSTREAMER);
+    open_capture(&cap);
 
-    // =====================================================================
-    // ÉTAPE 2 : PRÉPARATION DES IMAGES ET DU BUFFER DE MOUVEMENT
-    // =====================================================================
-    // colorFrame  : l'image couleur brute capturée à chaque tour de boucle
-    // gray        : la même image convertie en niveaux de gris (nécessaire
-    //               pour la détection de mouvement par différence d'images)
-    // motionMask  : image "noir et blanc" indiquant où il y a du mouvement
-    //               (blanc = mouvement détecté à cet endroit, noir = rien)
     cv::Mat colorFrame(CAPTURE_HEIGHT, CAPTURE_WIDTH, CV_8UC3);
     cv::Mat gray(CAPTURE_HEIGHT, CAPTURE_WIDTH, CV_8UC1);
     cv::Mat motionMask(CAPTURE_HEIGHT, CAPTURE_WIDTH, CV_8UC1);
 
-    // MotionBuffer : structure (définie dans mouvement.h) qui garde en
-    // mémoire les dernières images pour pouvoir calculer une différence
-    // stable dans le temps (moins sensible au bruit qu'une simple
-    // comparaison image N vs image N-1)
     MotionBuffer mb;
-    motion_init(mb, 6, cv::Size(CAPTURE_WIDTH, CAPTURE_HEIGHT)); // 6 = taille de la fenêtre temporelle
-    int threshold_pixel = 20; // seuil de sensibilité de la détection (plus bas = plus sensible)
+    motion_init(mb, 6, cv::Size(CAPTURE_WIDTH, CAPTURE_HEIGHT));
+    int threshold_pixel = 20;
 
     // =====================================================================
-    // ÉTAPE 3 : INITIALISATION DES NOUVEAUX MODULES (réseau + GPIO)
+    // INITIALISATION DES MODULES
     // =====================================================================
     if (!gpio_init()) {
-        // On n'arrête pas le programme pour autant : la détection vidéo
-        // peut continuer à fonctionner même si la LED est en panne,
-        // ce n'est pas bloquant pour la démonstration.
         std::cerr << "main: échec initialisation GPIO, la LED ne fonctionnera pas" << std::endl;
     }
-    network_init(); // prépare libcurl (voir network.cpp)
+    network_init();
 
     if (!arduino_init(ARDUINO_PORT, ARDUINO_BAUDRATE)) {
-        // Comme pour le GPIO, on n'arrête pas le programme pour autant :
-        // la caméra peut continuer à fonctionner même si l'Arduino n'est
-        // pas branché/détecté.
         std::cerr << "main: échec liaison Arduino, seule la caméra sera active" << std::endl;
     }
 
-    // =====================================================================
-    // ÉTAPE 4 (optionnelle) : FENÊTRES DE DEBUG
-    // =====================================================================
 #ifdef DEBUG_UI
     cv::namedWindow("capture", 1);
     cv::namedWindow("mouvement", 1);
-    // Petit curseur pour ajuster le seuil de détection en direct, pratique
-    // pour le calibrer avant de figer sa valeur dans config.h
     cv::createTrackbar("Seuil", "mouvement", &threshold_pixel, 200);
 #endif
 
     // =====================================================================
-    // ÉTAPE 5 : VARIABLES DE LA MACHINE À ÉTATS
+    // UN SUIVI D'ÉTAT INDÉPENDANT PAR CAPTEUR
     // =====================================================================
-    EtatAlerte etat = EtatAlerte::NORMAL; // on démarre en surveillance normale
+    SuiviCapteur suivi_camera;
+    SuiviCapteur suivi_bouton;
+    SuiviCapteur suivi_photoresistance;
 
-    int frames_mouvement_consecutifs = 0;  // compteur d'images successives avec mouvement
-    std::string event_id_courant;           // identifiant de l'événement en cours (renvoyé par le serveur)
-    std::string capteur_declencheur;         // quel capteur a déclenché l'événement en cours ("camera_fixe", "bouton" ou "photoresistance")
+    int frames_mouvement_consecutifs = 0;
 
-    // Horodatages utilisés pour gérer les délais (pause après une alerte,
-    // abandon si le serveur ne répond jamais)
-    std::chrono::steady_clock::time_point fin_pause;
-    std::chrono::steady_clock::time_point debut_attente_decision;
+    // Compteur PARTAGÉ (contrairement au reste) : nombre d'alertes
+    // actuellement confirmées "vraies", tous capteurs confondus. Tant
+    // qu'il est > 0, la LED doit rester allumée quoi qu'il arrive par
+    // ailleurs (fausse alerte sur un autre capteur = pas de clignotement).
+    int alertes_reelles_actives = 0;
 
-    auto t_prev = std::chrono::high_resolution_clock::now(); // pour le calcul du FPS (debug uniquement)
+    auto t_prev = std::chrono::high_resolution_clock::now();
 
     // =====================================================================
-    // ÉTAPE 6 : BOUCLE PRINCIPALE (tourne indéfiniment)
+    // FONCTION RÉUTILISÉE POUR LES 3 CAPTEURS (évite de tripler le code)
     // =====================================================================
-    while (true) {
+    // "declenchement" : true si CE capteur vient de détecter quelque
+    // chose de nouveau à CE tour de boucle (calculé avant l'appel).
+    auto traiter_capteur = [&](SuiviCapteur &s, const std::string &nom, bool declenchement) {
 
-        // --- 6.1 : Capture d'une image (comme dans le code d'origine) ---
-        capture_frame(&cap, &colorFrame);
+        switch (s.etat) {
 
-        // --- 6.2 : Conversion en niveaux de gris ---
-        RGBtoBW(&colorFrame, &gray);
-
-        // --- 6.3 : Mise à jour du buffer et calcul du masque de mouvement ---
-        motion_push_gray(mb, gray);
-        bool masque_valide = motion_compute_mask(mb, motionMask, threshold_pixel);
-        // "masque_valide" est false tant que le buffer n'a pas assez
-        // d'images accumulées (au tout début du programme)
-
-        // --- 6.4 : Barycentre et couleur moyenne (utile pour debug/affichage) ---
-        cv::Point centroid = compute_centroid_keep_last(motionMask, mb);
-        cv::Scalar meanRGB = compute_mean_rgb_keep_last(colorFrame, motionMask, mb);
-        draw_cross(colorFrame, centroid, cv::Scalar(0, 255, 0)); // dessine une croix verte (visible seulement en mode DEBUG_UI)
-
-        // --- 6.5 : Surface de mouvement détectée (nombre de pixels blancs dans le masque) ---
-        int surface_mouvement = cv::countNonZero(motionMask);
-
-        // --- 6.6 : Lecture de l'Arduino (NE BLOQUE JAMAIS, cf. arduino.cpp) ---
-        // On la fait à CHAQUE tour de boucle, quel que soit l'état, pour ne
-        // jamais laisser le tampon de réception s'accumuler indéfiniment
-        // (même si on ignore le résultat quand on n'est pas en surveillance).
-        std::string capteur_arduino;
-        bool evenement_arduino = arduino_lire_evenement(capteur_arduino);
-
-        // =================================================================
-        // LOGIQUE DE LA MACHINE À ÉTATS
-        // =================================================================
-        switch (etat) {
-
-        // -----------------------------------------------------------
-        // ÉTAT "NORMAL" : on surveille (caméra ET Arduino), on attend
-        // un événement franc venant de N'IMPORTE LEQUEL des 3 capteurs
-        // -----------------------------------------------------------
         case EtatAlerte::NORMAL: {
+            if (!declenchement) break;
 
-            // --- Détection par la caméra (comme avant) ---
-            // MOTION_AREA_MIN est défini dans mouvement.h : c'est la
-            // surface minimale (en nombre de pixels) pour considérer
-            // qu'il y a VRAIMENT du mouvement (et pas juste 2-3 pixels
-            // de bruit électronique)
-            if (masque_valide && surface_mouvement >= MOTION_AREA_MIN) {
-                frames_mouvement_consecutifs++;
-            } else {
-                // Dès qu'une image n'a pas de mouvement suffisant, on
-                // remet le compteur à zéro : on veut un mouvement CONTINU,
-                // pas juste quelques images isolées éparpillées dans le temps.
-                frames_mouvement_consecutifs = 0;
-            }
+            std::cout << "main: événement détecté (" << nom << "), envoi au serveur" << std::endl;
 
-            bool declenchement_camera = (frames_mouvement_consecutifs >= CONSECUTIVE_FRAMES_TRIGGER);
+            if (send_alert_event(nom, ZONE_NAME, s.event_id)) {
+                s.etat = EtatAlerte::EN_ATTENTE_DECISION;
+                s.debut_attente = std::chrono::steady_clock::now();
+                s.dernier_sondage = s.debut_attente;
 
-            // --- On détermine QUEL capteur a déclenché (priorité à la
-            // caméra si les deux arrivent exactement au même tour de
-            // boucle, cas très rare mais autant le gérer proprement) ---
-            if (declenchement_camera) {
-                capteur_declencheur = CAPTEUR_NAME_CAMERA;
-            } else if (evenement_arduino) {
-                capteur_declencheur = capteur_arduino; // "bouton" ou "photoresistance", donné par l'Arduino lui-même
-            }
-
-            if (declenchement_camera || evenement_arduino) {
-                std::cout << "main: événement détecté (" << capteur_declencheur << "), envoi au serveur" << std::endl;
-
-                if (send_alert_event(capteur_declencheur, ZONE_NAME, event_id_courant)) {
-                    // L'envoi a réussi : on passe à l'état "en attente de décision"
-                    etat = EtatAlerte::EN_ATTENTE_DECISION;
-                    debut_attente_decision = std::chrono::steady_clock::now();
-                } else {
-                    // L'envoi a échoué (serveur injoignable...) : on reste en
-                    // NORMAL, on retentera dès qu'un nouvel événement franc arrivera
-                    std::cerr << "main: échec de l'envoi, nouvelle tentative au prochain événement" << std::endl;
+                // Capture de l'image caméra ACTUELLE, quel que soit le
+                // capteur à l'origine (la caméra tourne en continu ici)
+                std::vector<uchar> donnees_jpeg;
+                cv::imencode(".jpg", colorFrame, donnees_jpeg);
+                if (!send_snapshot(s.event_id, donnees_jpeg)) {
+                    std::cerr << "main: (" << nom << ") échec envoi capture (alerte valide sans image)" << std::endl;
                 }
-
-                frames_mouvement_consecutifs = 0; // on remet le compteur à zéro dans tous les cas
+            } else {
+                std::cerr << "main: (" << nom << ") échec envoi événement, nouvelle tentative au prochain déclenchement" << std::endl;
             }
             break;
         }
 
-        // -----------------------------------------------------------
-        // ÉTAT "EN_ATTENTE_DECISION" : on a signalé l'alerte, on attend
-        // que quelqu'un réponde depuis l'app/le site web
-        // -----------------------------------------------------------
         case EtatAlerte::EN_ATTENTE_DECISION: {
+            auto maintenant = std::chrono::steady_clock::now();
 
-            // On vérifie d'abord qu'on n'attend pas depuis trop longtemps
             auto attente_ecoulee = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - debut_attente_decision).count();
+                maintenant - s.debut_attente).count();
 
             if (attente_ecoulee >= POLL_TIMEOUT_SECONDS) {
-                std::cerr << "main: personne n'a répondu à temps, on repart en surveillance" << std::endl;
-                etat = EtatAlerte::NORMAL;
+                std::cerr << "main: (" << nom << ") personne n'a répondu à temps, on repart en surveillance" << std::endl;
+                s.etat = EtatAlerte::NORMAL;
                 break;
             }
 
-            // On interroge le serveur pour savoir où en est la décision
-            std::string decision = poll_decision(event_id_courant);
+            // On ne sonde le serveur qu'une fois par POLL_INTERVAL_MS,
+            // SANS AUCUN sleep() ici : un sleep bloquerait la caméra ET
+            // les 2 autres capteurs pendant ce temps, ce qu'on veut
+            // justement éviter.
+            auto depuis_dernier_sondage = std::chrono::duration_cast<std::chrono::milliseconds>(
+                maintenant - s.dernier_sondage).count();
+
+            if (depuis_dernier_sondage < POLL_INTERVAL_MS) break;
+            s.dernier_sondage = maintenant;
+
+            std::string decision = poll_decision(s.event_id);
 
             if (decision == "fausse_alerte") {
-                std::cout << "main: fausse alerte confirmée par l'app/le site" << std::endl;
-                led_blink_once(300); // 300 millisecondes = un flash bref
-                etat = EtatAlerte::EN_PAUSE;
-                fin_pause = std::chrono::steady_clock::now() + std::chrono::seconds(ALERT_COOLDOWN_SECONDS);
+                if (alertes_reelles_actives == 0) {
+                    std::cout << "main: (" << nom << ") fausse alerte confirmée, la LED clignote une fois" << std::endl;
+                    led_blink_once(300);
+                } else {
+                    std::cout << "main: (" << nom << ") fausse alerte confirmée, mais LED maintenue allumée (alerte réelle en cours ailleurs)" << std::endl;
+                }
+                s.pause_suite_a_vraie_alerte = false;
+                s.etat = EtatAlerte::EN_PAUSE;
+                s.fin_pause = maintenant + std::chrono::seconds(ALERT_COOLDOWN_SECONDS);
 
             } else if (decision == "vraie_alerte") {
-                std::cout << "main: alerte confirmée comme réelle, la LED reste allumée" << std::endl;
-                led_on(); // reste allumée (pas de délai ici, contrairement au clignotement)
-                etat = EtatAlerte::EN_PAUSE;
-                fin_pause = std::chrono::steady_clock::now() + std::chrono::seconds(ALERT_COOLDOWN_SECONDS);
+                std::cout << "main: (" << nom << ") alerte confirmée comme réelle, la LED reste allumée" << std::endl;
+                led_on();
+                alertes_reelles_actives++;
+                s.pause_suite_a_vraie_alerte = true;
+                s.etat = EtatAlerte::EN_PAUSE;
+                s.fin_pause = maintenant + std::chrono::seconds(ALERT_COOLDOWN_SECONDS);
 
             } else if (decision == "erreur") {
-                // Problème réseau ponctuel : on ne change pas d'état, on
-                // retentera au prochain tour de boucle
-                std::cerr << "main: erreur réseau pendant l'attente de décision, nouvel essai..." << std::endl;
+                std::cerr << "main: (" << nom << ") erreur réseau pendant l'attente de décision, nouvel essai..." << std::endl;
             }
-            // Si decision == "en_attente" : rien à faire, on continue à
-            // interroger le serveur au prochain tour de boucle
-
-            // On attend un court instant avant de réinterroger le serveur,
-            // pour ne pas le solliciter en boucle sans arrêt
-            std::this_thread::sleep_for(std::chrono::milliseconds(POLL_INTERVAL_MS));
+            // "en_attente" : rien à faire, on retentera au prochain sondage
             break;
         }
 
-        // -----------------------------------------------------------
-        // ÉTAT "EN_PAUSE" : alerte traitée, on patiente avant de
-        // pouvoir en redéclencher une nouvelle
-        // -----------------------------------------------------------
         case EtatAlerte::EN_PAUSE:
-            if (std::chrono::steady_clock::now() >= fin_pause) {
-                etat = EtatAlerte::NORMAL;
-                std::cout << "main: fin de pause, détection réarmée" << std::endl;
+            if (std::chrono::steady_clock::now() >= s.fin_pause) {
+                if (s.pause_suite_a_vraie_alerte) {
+                    alertes_reelles_actives--;
+                    if (alertes_reelles_actives <= 0) {
+                        alertes_reelles_actives = 0;
+                        led_off();
+                        std::cout << "main: (" << nom << ") fin de pause, plus aucune alerte réelle active, LED éteinte" << std::endl;
+                    } else {
+                        std::cout << "main: (" << nom << ") fin de pause (LED maintenue allumée par une autre alerte réelle en cours)" << std::endl;
+                    }
+                } else {
+                    std::cout << "main: (" << nom << ") fin de pause, détection réarmée" << std::endl;
+                }
+                s.etat = EtatAlerte::NORMAL;
             }
             break;
         }
+    };
 
-        // =================================================================
-        // AFFICHAGE DEBUG (uniquement si compilé avec -DDEBUG_UI)
-        // =================================================================
+    // =====================================================================
+    // BOUCLE PRINCIPALE
+    // =====================================================================
+    while (true) {
+
+        capture_frame(&cap, &colorFrame);
+        RGBtoBW(&colorFrame, &gray);
+
+        motion_push_gray(mb, gray);
+        bool masque_valide = motion_compute_mask(mb, motionMask, threshold_pixel);
+
+        cv::Point centroid = compute_centroid_keep_last(motionMask, mb);
+        cv::Scalar meanRGB = compute_mean_rgb_keep_last(colorFrame, motionMask, mb);
+        draw_cross(colorFrame, centroid, cv::Scalar(0, 255, 0));
+
+        int surface_mouvement = cv::countNonZero(motionMask);
+
+        // --- Détection caméra : on ne fait avancer le compteur que si ce
+        // capteur est bien en surveillance normale (sinon ça n'a pas de
+        // sens d'accumuler pendant qu'une alerte caméra est déjà en cours) ---
+        bool declenchement_camera = false;
+        if (suivi_camera.etat == EtatAlerte::NORMAL) {
+            if (masque_valide && surface_mouvement >= MOTION_AREA_MIN) {
+                frames_mouvement_consecutifs++;
+            } else {
+                frames_mouvement_consecutifs = 0;
+            }
+            if (frames_mouvement_consecutifs >= CONSECUTIVE_FRAMES_TRIGGER) {
+                declenchement_camera = true;
+                frames_mouvement_consecutifs = 0;
+            }
+        } else {
+            frames_mouvement_consecutifs = 0;
+        }
+
+        // --- Lecture Arduino (jamais bloquante) ---
+        std::string capteur_arduino;
+        bool evenement_arduino = arduino_lire_evenement(capteur_arduino);
+
+        bool declenchement_bouton = false;
+        bool declenchement_photoresistance = false;
+
+        if (evenement_arduino) {
+            if (capteur_arduino == "bouton") {
+                if (suivi_bouton.etat == EtatAlerte::NORMAL) {
+                    declenchement_bouton = true;
+                } else {
+                    std::cout << "[arduino] événement (bouton) reçu mais ignoré : ce capteur a déjà une alerte en cours" << std::endl;
+                }
+            } else if (capteur_arduino == "photoresistance") {
+                if (suivi_photoresistance.etat == EtatAlerte::NORMAL) {
+                    declenchement_photoresistance = true;
+                } else {
+                    std::cout << "[arduino] événement (photoresistance) reçu mais ignoré : ce capteur a déjà une alerte en cours" << std::endl;
+                }
+            }
+        }
+
+        // --- Les 3 capteurs sont traités INDÉPENDAMMENT : aucun ne
+        // bloque les 2 autres ---
+        traiter_capteur(suivi_camera, CAPTEUR_NAME_CAMERA, declenchement_camera);
+        traiter_capteur(suivi_bouton, "bouton", declenchement_bouton);
+        traiter_capteur(suivi_photoresistance, "photoresistance", declenchement_photoresistance);
+
 #ifdef DEBUG_UI
         auto t_now = std::chrono::high_resolution_clock::now();
         double dt = std::chrono::duration_cast<std::chrono::microseconds>(t_now - t_prev).count() / 1e6;
-        if (dt <= 0) dt = 1e-6; // évite une division par zéro
+        if (dt <= 0) dt = 1e-6;
         double fps = 1.0 / dt;
         t_prev = t_now;
 
         std::ostringstream oss_info;
-        oss_info << "FPS: " << int(fps) << "  Etat: " << int(etat);
+        oss_info << "FPS: " << int(fps)
+                  << "  cam:" << int(suivi_camera.etat)
+                  << " bouton:" << int(suivi_bouton.etat)
+                  << " photo:" << int(suivi_photoresistance.etat);
         cv::putText(colorFrame, oss_info.str(), cv::Point(10, 60),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 0), 2);
 
         cv::imshow("capture", colorFrame);
         cv::imshow("mouvement", motionMask);
 
-        // Permet de quitter le programme en appuyant sur une touche
-        // (uniquement disponible en mode debug avec fenêtre)
         if (cv::waitKey(1) >= 0)
             break;
 #endif
     }
 
-    // =====================================================================
-    // ÉTAPE 7 : NETTOYAGE AVANT DE QUITTER (jamais atteint en usage normal
-    // headless, sauf si on ajoute plus tard un moyen d'arrêter proprement)
-    // =====================================================================
     gpio_cleanup();
     network_cleanup();
     arduino_cleanup();
