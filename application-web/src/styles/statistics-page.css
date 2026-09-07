@@ -1,0 +1,709 @@
+/*
+  ============================================================
+  STATISTIQUES
+  ============================================================
+*/
+
+.stats-mobile-page {
+  min-width: 0;
+  padding-bottom: 24px;
+}
+
+.stats-mobile-heading {
+  margin-bottom: 22px;
+}
+
+
+/* ============================================================
+   PÉRIODE
+   ============================================================ */
+
+.stats-mobile-period {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.stats-mobile-period label {
+  color: var(--portal-muted);
+  font-size: 0.7rem;
+}
+
+.stats-mobile-period select {
+  width: 100%;
+  height: 46px;
+
+  padding: 0 13px;
+
+  border: 1px solid var(--portal-border);
+  border-radius: 12px;
+
+  outline: none;
+
+  color: var(--portal-text);
+  background: #ffffff;
+
+  font: inherit;
+  font-size: 0.76rem;
+
+  cursor: pointer;
+}
+
+.stats-mobile-period select:focus {
+  border-color: var(--portal-teal);
+
+  box-shadow:
+    0 0 0 3px
+    rgba(15, 143, 131, 0.09);
+}
+
+
+/* ============================================================
+   KPI
+   ============================================================ */
+
+.stats-mobile-kpi-grid {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      4,
+      minmax(0, 1fr)
+    );
+
+  gap: 14px;
+
+  margin-bottom: 18px;
+}
+
+.stats-mobile-kpi {
+  display: flex;
+
+  min-width: 0;
+
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  gap: 12px;
+
+  padding: 18px 16px;
+
+  border: 1px solid var(--portal-border);
+  border-radius: 17px;
+
+  background: #ffffff;
+
+  box-shadow:
+    0 7px 22px
+    rgba(17, 46, 57, 0.045);
+
+  text-align: center;
+}
+
+
+/* ============================================================
+   ICÔNES KPI
+   ============================================================ */
+
+.stats-mobile-kpi-icon {
+  display: grid;
+
+  width: 42px;
+  height: 42px;
+
+  flex: 0 0 42px;
+
+  place-items: center;
+
+  border-radius: 12px;
+}
+
+.stats-mobile-kpi-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.stats-mobile-kpi-icon.is-detection {
+  color: #07887c;
+  background: #e2f5f1;
+}
+
+.stats-mobile-kpi-icon.is-alert {
+  color: #c64a50;
+  background: #fbe8e8;
+}
+
+.stats-mobile-kpi-icon.is-response {
+  color: #3479aa;
+  background: #e7f2f9;
+}
+
+.stats-mobile-kpi-icon.is-availability {
+  color: #7353a6;
+  background: #efe9fa;
+}
+
+
+/* ============================================================
+   TEXTE KPI
+   ============================================================ */
+
+.stats-mobile-kpi-copy {
+  display: flex;
+
+  min-width: 0;
+  width: 100%;
+
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  gap: 3px;
+
+  text-align: center;
+}
+
+.stats-mobile-kpi-copy > span {
+  color: var(--portal-muted);
+
+  font-size: 0.68rem;
+
+  line-height: 1.3;
+}
+
+.stats-mobile-kpi-copy > strong {
+  color: var(--portal-text);
+
+  font-size: 1.45rem;
+
+  line-height: 1.1;
+}
+
+.stats-mobile-kpi-copy small {
+  color: var(--portal-muted);
+
+  font-size: 0.59rem;
+
+  line-height: 1.3;
+}
+
+
+/* ============================================================
+   CARTES GRAPHIQUES
+   ============================================================ */
+
+.stats-mobile-chart-card {
+  min-width: 0;
+
+  overflow: hidden;
+
+  margin-bottom: 15px;
+
+  padding: 18px;
+
+  border: 1px solid var(--portal-border);
+  border-radius: 18px;
+
+  background: #ffffff;
+
+  box-shadow:
+    0 7px 22px
+    rgba(17, 46, 57, 0.045);
+}
+
+
+/* ============================================================
+   EN-TÊTE GRAPHIQUE
+   ============================================================ */
+
+.stats-mobile-chart-header {
+  display: flex;
+
+  align-items: flex-start;
+
+  justify-content: space-between;
+
+  gap: 12px;
+}
+
+.stats-mobile-chart-header > div {
+  min-width: 0;
+}
+
+.stats-mobile-chart-header > svg {
+  width: 19px;
+  height: 19px;
+
+  flex: 0 0 19px;
+
+  color: var(--portal-teal);
+}
+
+.stats-mobile-eyebrow {
+  display: block;
+
+  margin-bottom: 4px;
+
+  color: var(--portal-teal);
+
+  font-size: 0.59rem;
+  font-weight: 800;
+
+  letter-spacing: 0.08em;
+
+  text-transform: uppercase;
+}
+
+.stats-mobile-chart-header h2 {
+  margin: 0;
+
+  color: var(--portal-text);
+
+  font-size: 0.9rem;
+
+  line-height: 1.3;
+}
+
+
+/* ============================================================
+   LÉGENDE
+   ============================================================ */
+
+.stats-mobile-legend {
+  display: flex;
+
+  align-items: center;
+
+  gap: 13px;
+
+  margin-top: 7px;
+
+  color: var(--portal-muted);
+
+  font-size: 0.61rem;
+  font-weight: 700;
+}
+
+.stats-mobile-legend > span {
+  display: inline-flex;
+
+  align-items: center;
+
+  gap: 5px;
+}
+
+.stats-mobile-legend i {
+  display: block;
+
+  width: 7px;
+  height: 7px;
+
+  border-radius: 50%;
+}
+
+.stats-mobile-legend i.is-motion {
+  background: #109487;
+}
+
+.stats-mobile-legend i.is-alert {
+  background: #d95155;
+}
+
+
+/* ============================================================
+   CONTENEURS RECHARTS
+   ============================================================ */
+
+.stats-mobile-chart-container {
+  width: 100%;
+  height: 245px;
+
+  min-width: 0;
+
+  margin-top: 8px;
+}
+
+.stats-mobile-chart-container-bar {
+  height: 235px;
+
+  margin-top: 13px;
+}
+
+
+/* ============================================================
+   BILAN
+   ============================================================ */
+
+.stats-mobile-summary {
+  display: flex;
+
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  gap: 14px;
+
+  padding: 22px 19px;
+
+  border-radius: 18px;
+
+  color: #ffffff;
+
+  background: #103b47;
+
+  box-shadow:
+    0 9px 24px
+    rgba(16, 59, 71, 0.12);
+
+  text-align: center;
+}
+
+.stats-mobile-summary-icon {
+  display: grid;
+
+  width: 43px;
+  height: 43px;
+
+  flex: 0 0 43px;
+
+  place-items: center;
+
+  border-radius: 12px;
+
+  background:
+    rgba(255, 255, 255, 0.1);
+}
+
+.stats-mobile-summary-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.stats-mobile-summary > div {
+  display: flex;
+
+  width: 100%;
+
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  text-align: center;
+}
+
+.stats-mobile-summary-eyebrow {
+  display: block;
+
+  margin-bottom: 5px;
+
+  color: #1ba99b;
+
+  font-size: 0.61rem;
+  font-weight: 800;
+
+  letter-spacing: 0.08em;
+
+  text-transform: uppercase;
+}
+
+.stats-mobile-summary h2 {
+  margin: 0 0 6px;
+
+  color: #ffffff;
+
+  font-size: 0.9rem;
+}
+
+.stats-mobile-summary p {
+  margin: 0;
+
+  color:
+    rgba(255, 255, 255, 0.76);
+
+  font-size: 0.69rem;
+
+  line-height: 1.55;
+}
+
+.stats-mobile-summary p strong {
+  color: #ffffff;
+}
+
+
+/* ============================================================
+   TABLETTE
+   ============================================================ */
+
+@media (max-width: 1050px) {
+  .stats-mobile-kpi-grid {
+    grid-template-columns:
+      repeat(
+        2,
+        minmax(0, 1fr)
+      );
+  }
+}
+
+
+/* ============================================================
+   MOBILE
+   ============================================================ */
+
+@media (max-width: 760px) {
+  .stats-mobile-page {
+    padding-bottom: 105px;
+  }
+
+  .stats-mobile-heading {
+    margin-bottom: 17px;
+  }
+
+
+  /* ==========================================================
+     PÉRIODE
+     ========================================================== */
+
+  .stats-mobile-period {
+    margin-bottom: 14px;
+  }
+
+  .stats-mobile-period label {
+    font-size: 0.64rem;
+  }
+
+  .stats-mobile-period select {
+    height: 42px;
+
+    border-radius: 11px;
+
+    font-size: 0.7rem;
+  }
+
+
+  /* ==========================================================
+     KPI 2 × 2
+     ========================================================== */
+
+  .stats-mobile-kpi-grid {
+    grid-template-columns:
+      repeat(
+        2,
+        minmax(0, 1fr)
+      );
+
+    gap: 10px;
+
+    margin-bottom: 14px;
+  }
+
+  .stats-mobile-kpi {
+    min-height: 112px;
+
+    gap: 9px;
+
+    padding: 13px 10px;
+
+    border-radius: 14px;
+  }
+
+  .stats-mobile-kpi-icon {
+    width: 31px;
+    height: 31px;
+
+    flex-basis: 31px;
+
+    border-radius: 9px;
+  }
+
+  .stats-mobile-kpi-icon svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .stats-mobile-kpi-copy {
+    gap: 2px;
+  }
+
+  .stats-mobile-kpi-copy > span {
+    min-height: auto;
+
+    font-size: 0.59rem;
+  }
+
+  .stats-mobile-kpi-copy > strong {
+    margin-top: 1px;
+
+    font-size: 1.17rem;
+  }
+
+  .stats-mobile-kpi-copy small {
+    margin-top: 2px;
+
+    font-size: 0.51rem;
+  }
+
+
+  /* ==========================================================
+     GRAPHIQUES
+     ========================================================== */
+
+  .stats-mobile-chart-card {
+    margin-bottom: 12px;
+
+    padding:
+      14px
+      12px
+      12px;
+
+    border-radius: 15px;
+  }
+
+  .stats-mobile-eyebrow {
+    font-size: 0.55rem;
+  }
+
+  .stats-mobile-chart-header h2 {
+    font-size: 0.8rem;
+  }
+
+  .stats-mobile-chart-header > svg {
+    width: 17px;
+    height: 17px;
+
+    flex-basis: 17px;
+  }
+
+  .stats-mobile-legend {
+    gap: 11px;
+
+    margin-top: 6px;
+
+    font-size: 0.55rem;
+  }
+
+  .stats-mobile-chart-container {
+    height: 190px;
+
+    margin-top: 5px;
+  }
+
+  .stats-mobile-chart-container-bar {
+    height: 180px;
+
+    margin-top: 9px;
+  }
+
+
+  /* ==========================================================
+     BILAN
+     ========================================================== */
+
+  .stats-mobile-summary {
+    gap: 11px;
+
+    padding: 16px 15px;
+
+    border-radius: 15px;
+  }
+
+  .stats-mobile-summary-icon {
+    width: 36px;
+    height: 36px;
+
+    flex-basis: 36px;
+
+    border-radius: 10px;
+  }
+
+  .stats-mobile-summary-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .stats-mobile-summary-eyebrow {
+    margin-bottom: 4px;
+
+    font-size: 0.55rem;
+  }
+
+  .stats-mobile-summary h2 {
+    margin-bottom: 5px;
+
+    font-size: 0.8rem;
+  }
+
+  .stats-mobile-summary p {
+    font-size: 0.61rem;
+
+    line-height: 1.5;
+  }
+}
+
+
+/* ============================================================
+   PETIT MOBILE
+   ============================================================ */
+
+@media (max-width: 390px) {
+  .stats-mobile-kpi-grid {
+    gap: 8px;
+  }
+
+  .stats-mobile-kpi {
+    min-height: 104px;
+
+    padding: 11px 9px;
+  }
+
+  .stats-mobile-kpi-icon {
+    width: 29px;
+    height: 29px;
+
+    flex-basis: 29px;
+  }
+
+  .stats-mobile-kpi-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .stats-mobile-kpi-copy > span {
+    font-size: 0.55rem;
+  }
+
+  .stats-mobile-kpi-copy > strong {
+    font-size: 1.08rem;
+  }
+
+  .stats-mobile-kpi-copy small {
+    font-size: 0.48rem;
+  }
+
+  .stats-mobile-chart-container {
+    height: 180px;
+  }
+
+  .stats-mobile-chart-container-bar {
+    height: 170px;
+  }
+}
+
+
+/* ============================================================
+   ÉCRANS TRÈS ÉTROITS
+   ============================================================ */
+
+@media (max-width: 330px) {
+  .stats-mobile-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-mobile-kpi {
+    min-height: 0;
+  }
+}

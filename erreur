@@ -1,3 +1,0 @@
-main: événement détecté (camera_fixe), envoi au serveur
-{"detail":"Not Found"}network: le serveur a répondu un code 404 pour la capture
-main: (camera_fixe) échec envoi capture (alerte valide sans image)
