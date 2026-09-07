@@ -18,5 +18,5 @@ __pycache__/
 # OS
 .DS_Store
 
-#database
+# Database
 ./serveur/evenements.db
