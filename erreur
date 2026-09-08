@@ -8,3 +8,26 @@ g++ -Wall test_camera_module.cpp -o test_camera \
   -lopencv_core -lopencv_videoio -lopencv_imgcodecs -lpthread
 
 sudo ./test_camera
+
+
+ make
+g++ -Wall -c capture.cpp -I/usr/include/opencv4   
+capture.cpp: In function ‘void detect_red(cv::Mat*, cv::Mat*)’:
+capture.cpp:108:5: warning: this ‘else’ clause does not guard... [-Wmisleading-indentation]
+  108 |     else
+      |     ^~~~
+capture.cpp:110:9: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘else’
+  110 |         i=i+3;
+      |         ^
+g++ -Wall -c mouvement.cpp -I/usr/include/opencv4   
+g++ -Wall -c network.cpp -I/usr/include/opencv4   
+g++ -Wall -c gpio.cpp -I/usr/include/opencv4   
+g++ -Wall -c arduino.cpp -I/usr/include/opencv4   
+g++ -Wall -c main.cpp -I/usr/include/opencv4   
+main.cpp: In lambda function:
+main.cpp:131:22: error: ‘send_snapshot’ was not declared in this scope
+  131 |                 if (!send_snapshot(s.event_id, donnees_jpeg)) {
+      |                      ^~~~~~~~~~~~~
+make: *** [makefile:40: main.o] Error 1
+id5@raspberrypi:~/Desktop/Atelier_MAISON-sara/raspberry_camera_arduino_led $ grep -n "send_snap" main.cpp network.h network.cpp
+main.cpp:131:                if (!send_snapshot(s.event_id, donnees_jpeg)) {
