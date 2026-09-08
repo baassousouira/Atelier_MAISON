@@ -7,3 +7,14 @@ systemctl status ModemManager
 
 sudo systemctl stop ModemManager
 sudo systemctl disable ModemManager
+
+Unit ModemManager.service could not be found.
+
+ cat /dev/ttyACM0
+{ur":1}
+
+{"capteur":"bouton","valeur":1}
+
+id5@raspberrypi:~/Téléchargements/Atelier_MAISON-final/raspberry_camera_arduino_
+led $ cat /dev/ttyACM0
+{"apteur":"photoresistance","valeur":60.12,"variation":22.48}
